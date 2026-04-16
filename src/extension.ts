@@ -87,6 +87,7 @@ type ManagedStatusItem = {
   item: vscode.StatusBarItem;
   alignment: vscode.StatusBarAlignment;
   priority: number;
+  cachedTooltipRaw?: string;
 };
 
 let contextRef: vscode.ExtensionContext | undefined;
@@ -101,6 +102,8 @@ let hasApiKey = false;
 let isRefreshing = false;
 let hasAlertedHighRisk = false;
 let detailsPanel: vscode.WebviewPanel | undefined;
+let cachedDetailsHtml: string | undefined;
+let cachedNonce: string | undefined;
 
 const emptyUsageViewModel = {
   primaryModelName: "",
@@ -335,6 +338,9 @@ export function deactivate(): void {
     detailsPanel.dispose();
     detailsPanel = undefined;
   }
+
+  cachedDetailsHtml = undefined;
+  cachedNonce = undefined;
 }
 
 function registerCommands(context: vscode.ExtensionContext): void {
@@ -433,9 +439,13 @@ function addStatusItem(
   });
 }
 
-function applyStatusItemSpec(item: vscode.StatusBarItem, spec: StatusItemSpec): void {
+function applyStatusItemSpec(item: vscode.StatusBarItem, spec: StatusItemSpec, existing: ManagedStatusItem): void {
   item.text = spec.text;
-  item.tooltip = spec.tooltip;
+  const tooltipKey = typeof spec.tooltip === 'string' ? spec.tooltip : spec.tooltip?.value;
+  if (existing.cachedTooltipRaw !== tooltipKey) {
+    item.tooltip = spec.tooltip;
+    existing.cachedTooltipRaw = tooltipKey;
+  }
   item.command = spec.command;
   item.color = spec.color;
   item.backgroundColor = spec.backgroundColor;
@@ -454,10 +464,11 @@ function renderStatusItems(specs: StatusItemSpec[]): void {
         item: vscode.window.createStatusBarItem(spec.alignment, spec.priority),
         alignment: spec.alignment,
         priority: spec.priority,
+        cachedTooltipRaw: undefined,
       };
     }
 
-    applyStatusItemSpec(statusItems[index].item, spec);
+    applyStatusItemSpec(statusItems[index].item, spec, statusItems[index]);
   }
 
   for (let index = specs.length; index < statusItems.length; index += 1) {
@@ -834,8 +845,12 @@ function updateDetailsPanel(): void {
     return;
   }
 
-  detailsPanel.title = getRuntimeStrings().detailsPanelTitle;
-  detailsPanel.webview.html = renderDetailsPanelHtml();
+  const newHtml = renderDetailsPanelHtml();
+  if (cachedDetailsHtml !== newHtml) {
+    cachedDetailsHtml = newHtml;
+    detailsPanel.title = getRuntimeStrings().detailsPanelTitle;
+    detailsPanel.webview.html = newHtml;
+  }
 }
 
 function renderDetailsPanelHtml(): string {
@@ -988,7 +1003,7 @@ function renderDetailsPanelHtml(): string {
             <h3 class="card-title"><span class="icon">⚡</span> ${i18n.currentInterval}</h3>
             <div class="reset-timer">
               <span class="timer-icon">⏳</span>
-              <span class="timer-value">${escapeHtml(latestVm.resetTimestamp ? formatCountdown(latestVm.resetTimestamp) : "--:--:--")}</span>
+              <span class="timer-value" data-timestamp="${latestVm.resetTimestamp || 0}">--:--:--</span>
             </div>
           </div>
           
@@ -1028,7 +1043,7 @@ function renderDetailsPanelHtml(): string {
             <h3 class="card-title"><span class="icon">🗓️</span> ${i18n.weeklyAggregate}</h3>
             <div class="reset-timer">
               <span class="timer-icon">🕒</span>
-              <span class="timer-value">${escapeHtml(latestVm.weeklyResetTimestamp ? formatCountdown(latestVm.weeklyResetTimestamp) : "--:--")}</span>
+              <span class="timer-value" data-timestamp="${latestVm.weeklyResetTimestamp || 0}">--:--:--</span>
             </div>
           </div>
 
@@ -1103,7 +1118,10 @@ function renderDetailsPanelHtml(): string {
 }
 
 function renderDetailsHtmlSkeleton(innerHtml: string): string {
-  const nonce = getNonce();
+  if (!cachedNonce) {
+    cachedNonce = getNonce();
+  }
+  const nonce = cachedNonce;
   const strings = getRuntimeStrings();
   return `<!DOCTYPE html>
 <html lang="${strings.webviewLang}">
@@ -1843,6 +1861,28 @@ ${innerHtml}
             });
           });
         }
+
+        // 倒计时更新
+        function formatCountdown(ts) {
+          if (!ts || ts <= 0) return "--:--:--";
+          const now = Date.now();
+          const diff = ts - now;
+          if (diff <= 0) return "00:00:00";
+          const h = Math.floor(diff / 3600000);
+          const m = Math.floor((diff % 3600000) / 60000);
+          const s = Math.floor((diff % 60000) / 1000);
+          return [h, m, s].map(v => String(v).padStart(2, "0")).join(":");
+        }
+        function updateCountdowns() {
+          document.querySelectorAll(".timer-value[data-timestamp]").forEach(function(el) {
+            const ts = parseInt(el.getAttribute("data-timestamp"), 10);
+            if (ts > 0) {
+              el.textContent = formatCountdown(ts);
+            }
+          });
+        }
+        updateCountdowns();
+        setInterval(updateCountdowns, 1000);
 })();
 </script>
 </body>
