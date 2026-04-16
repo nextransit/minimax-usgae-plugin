@@ -43,6 +43,7 @@ type UsageViewModel = {
   weeklyUsedPercent: number | null;
   weeklyResetTimestamp: number | null;
   weeklyResetInLabel: string;
+  intervalLabel: string;
   models: Array<{
     name: string;
     timeWindow: string;
@@ -69,7 +70,7 @@ type ExtensionConfig = {
 };
 
 let contextRef: vscode.ExtensionContext | undefined;
-let statusItem: vscode.StatusBarItem | undefined;
+let statusItems: vscode.StatusBarItem[] = [];
 let output: vscode.OutputChannel | undefined;
 let refreshTimer: NodeJS.Timeout | undefined;
 let countdownTimer: NodeJS.Timeout | undefined;
@@ -78,6 +79,7 @@ let latestRawResponse: unknown = null;
 let lastUpdatedAt: Date | null = null;
 let hasApiKey = false;
 let isRefreshing = false;
+let hasAlertedHighRisk = false;
 let detailsPanel: vscode.WebviewPanel | undefined;
 
 const dateTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
@@ -113,6 +115,7 @@ const emptyUsageViewModel = {
   weeklyUsedPercent: null,
   weeklyResetTimestamp: null,
   weeklyResetInLabel: "",
+  intervalLabel: "",
   models: [],
 } satisfies Omit<UsageViewModel, "ok" | "statusLabel" | "raw">;
 
@@ -160,9 +163,11 @@ export function deactivate(): void {
     countdownTimer = undefined;
   }
 
-  if (statusItem) {
-    statusItem.dispose();
-    statusItem = undefined;
+  if (statusItems.length > 0) {
+    for (const item of statusItems) {
+      item.dispose();
+    }
+    statusItems = [];
   }
 
   if (detailsPanel) {
@@ -231,20 +236,44 @@ function registerCommands(context: vscode.ExtensionContext): void {
   );
 }
 
-function recreateStatusBarItem(): void {
-  if (statusItem) {
-    statusItem.dispose();
+function clearStatusItems(): void {
+  for (const item of statusItems) {
+    item.dispose();
   }
+  statusItems = [];
+}
 
-  const config = readConfig();
-  const alignment =
-    config.statusBarAlignment === "right"
-      ? vscode.StatusBarAlignment.Right
-      : vscode.StatusBarAlignment.Left;
-
-  statusItem = vscode.window.createStatusBarItem(alignment, 100);
-  statusItem.show();
+function recreateStatusBarItem(): void {
+  clearStatusItems();
   updateStatusBar();
+}
+
+function addStatusItem(
+  alignment: vscode.StatusBarAlignment,
+  priority: number,
+  text: string,
+  tooltip?: vscode.MarkdownString | string,
+  command?: string,
+  color?: string | vscode.ThemeColor,
+  backgroundColor?: vscode.ThemeColor,
+): vscode.StatusBarItem {
+  const item = vscode.window.createStatusBarItem(alignment, priority);
+  item.text = text;
+  if (tooltip) {
+    item.tooltip = tooltip;
+  }
+  if (command) {
+    item.command = command;
+  }
+  if (color) {
+    item.color = color;
+  }
+  if (backgroundColor) {
+    item.backgroundColor = backgroundColor;
+  }
+  item.show();
+  statusItems.push(item);
+  return item;
 }
 
 function restartRefreshTimer(): void {
@@ -253,7 +282,13 @@ function restartRefreshTimer(): void {
     refreshTimer = undefined;
   }
 
-  const intervalMs = readConfig().refreshIntervalSeconds * 1000;
+  let intervalMs = readConfig().refreshIntervalSeconds * 1000;
+  
+  // 动态刷新：使用率大于80%时缩短刷新时间至10s
+  if (latestVm && latestVm.usedPercent !== null && latestVm.usedPercent > 80) {
+    intervalMs = 10000;
+  }
+
   refreshTimer = setInterval(() => {
     void refreshUsage("auto");
   }, intervalMs);
@@ -317,6 +352,18 @@ async function refreshUsage(reason: "startup" | "auto" | "manual"): Promise<void
     const statusCodeLabel = result.statusCode === null ? "N/A" : String(result.statusCode);
     log(`刷新完成 [${reason}] ok=${result.ok} status=${statusCodeLabel} summary=${result.summary}`);
 
+    // 高风险弹窗提示逻辑
+    if (result.ok && latestVm && latestVm.usedPercent !== null) {
+      if (latestVm.usedPercent >= 95) {
+        if (!hasAlertedHighRisk) {
+          void vscode.window.showWarningMessage(`MiniMax 风险提示: 当前窗口剩余仅 ${100 - latestVm.usedPercent}%，即将耗尽！建议降低请求频率或切换模型。`);
+          hasAlertedHighRisk = true;
+        }
+      } else {
+        hasAlertedHighRisk = false;
+      }
+    }
+
     if (!result.ok && reason === "manual") {
       void vscode.window.showErrorMessage(`MiniMax 查询失败：${result.summary}`);
     }
@@ -336,99 +383,158 @@ async function refreshUsage(reason: "startup" | "auto" | "manual"): Promise<void
 }
 
 function updateStatusBar(): void {
-  if (!statusItem) {
-    return;
-  }
+  clearStatusItems();
 
   const config = readConfig();
-  resetStatusBarColors();
+  const alignment =
+    config.statusBarAlignment === "right"
+      ? vscode.StatusBarAlignment.Right
+      : vscode.StatusBarAlignment.Left;
+  const basePriority = 100;
 
   if (isRefreshing) {
-    statusItem.text = "$(sync~spin) MiniMax 查询中...";
-    statusItem.command = "minimaxUsage.showDetails";
-    statusItem.tooltip = buildRefreshingTooltip();
+    addStatusItem(
+      alignment,
+      basePriority,
+      "$(sync~spin) MiniMax 查询中...",
+      buildRefreshingTooltip(),
+      "minimaxUsage.showDetails",
+    );
     updateDetailsPanel();
     return;
   }
 
   if (!hasApiKey) {
-    statusItem.text = "$(key) MiniMax: 设置 API Key";
-    statusItem.command = "minimaxUsage.setApiKey";
-    statusItem.tooltip = buildMissingKeyTooltip();
-    statusItem.color = new vscode.ThemeColor("statusBarItem.warningForeground");
+    addStatusItem(
+      alignment,
+      basePriority,
+      "$(key) MiniMax: 设置 API Key",
+      buildMissingKeyTooltip(),
+      "minimaxUsage.setApiKey",
+      new vscode.ThemeColor("statusBarItem.warningForeground"),
+    );
     updateDetailsPanel();
     return;
   }
 
   if (!latestVm) {
-    statusItem.text = "$(sync) MiniMax: 等待刷新";
-    statusItem.command = "minimaxUsage.refresh";
-    statusItem.tooltip = buildWaitingTooltip();
-    statusItem.color = new vscode.ThemeColor("statusBarItem.prominentForeground");
+    addStatusItem(
+      alignment,
+      basePriority,
+      "$(sync) MiniMax: 等待刷新",
+      buildWaitingTooltip(),
+      "minimaxUsage.refresh",
+      new vscode.ThemeColor("statusBarItem.prominentForeground"),
+    );
     updateDetailsPanel();
     return;
   }
-
-  statusItem.command = "minimaxUsage.showDetails";
 
   if (!latestVm.ok) {
-    statusItem.text = `$(warning) MiniMax: ${truncate(latestVm.statusLabel, 40)}`;
-    statusItem.tooltip = buildDetailsTooltip(latestVm, config);
-    statusItem.color = new vscode.ThemeColor("statusBarItem.warningForeground");
-    statusItem.backgroundColor = new vscode.ThemeColor("statusBarItem.warningBackground");
+    addStatusItem(
+      alignment,
+      basePriority,
+      `$(warning) MiniMax: ${truncate(latestVm.statusLabel, 40)}`,
+      buildDetailsTooltip(latestVm, config),
+      "minimaxUsage.showDetails",
+      new vscode.ThemeColor("statusBarItem.warningForeground"),
+      new vscode.ThemeColor("statusBarItem.warningBackground"),
+    );
     updateDetailsPanel();
     return;
   }
 
-  const usedText = formatNumber(latestVm.usedCount);
-  const totalText = formatNumber(latestVm.totalCount);
-  const remainingText = formatNumber(latestVm.remainingCount);
+  // 正常显示逻辑 - 分段显示
+  const tooltip = buildDetailsTooltip(latestVm, config);
+  const command = "minimaxUsage.showDetails";
+  const priorityStep = alignment === vscode.StatusBarAlignment.Left ? -1 : 1;
+  let currentPriority = basePriority;
+
+  // 1. 周期时长
+  if (latestVm.intervalLabel) {
+    addStatusItem(
+      alignment,
+      currentPriority,
+      `${latestVm.intervalLabel}: `,
+      tooltip,
+      command,
+      "#888888",
+    );
+    currentPriority += priorityStep;
+  }
+
+  // 2. 当前配额百分比
   const percentText = latestVm.usedPercent === null ? "-" : `${latestVm.usedPercent}%`;
+  addStatusItem(
+    alignment,
+    currentPriority,
+    percentText,
+    tooltip,
+    command,
+    getPercentColor(latestVm.usedPercent),
+  );
+  currentPriority += priorityStep;
 
-  const weeklyText =
-    config.showWeeklyInStatusBar && latestVm.weeklyUsedPercent !== null
-      ? ` · 周${latestVm.weeklyUsedPercent}%`
+  // 3. 当前重置时间
+  const resetLabel = latestVm.resetTimestamp ? formatCountdownFriendly(latestVm.resetTimestamp) : "";
+  if (resetLabel) {
+    addStatusItem(
+      alignment,
+      currentPriority,
+      ` $(clock) ${resetLabel}`,
+      tooltip,
+      command,
+      "#888888",
+    );
+    currentPriority += priorityStep;
+  }
+
+  // 4. 每周配额 (可选)
+  if (config.showWeeklyInStatusBar && latestVm.weeklyUsedPercent !== null) {
+    addStatusItem(alignment, currentPriority, "  每周: ", tooltip, command, "#888888");
+    currentPriority += priorityStep;
+
+    addStatusItem(
+      alignment,
+      currentPriority,
+      `${latestVm.weeklyUsedPercent}%`,
+      tooltip,
+      command,
+      getPercentColor(latestVm.weeklyUsedPercent),
+    );
+    currentPriority += priorityStep;
+
+    const weeklyResetLabel = latestVm.weeklyResetTimestamp
+      ? formatCountdownFriendly(latestVm.weeklyResetTimestamp)
       : "";
+    if (weeklyResetLabel) {
+      addStatusItem(
+        alignment,
+        currentPriority,
+        ` $(clock) ${weeklyResetLabel}`,
+        tooltip,
+        command,
+        "#888888",
+      );
+      currentPriority += priorityStep;
+    }
+  }
 
-  statusItem.text = `$(dashboard) MiniMax ${usedText}/${totalText} (${percentText}) · 剩余${remainingText}${weeklyText}`;
-  statusItem.tooltip = buildDetailsTooltip(latestVm, config);
-
-  applyUsageToneColors(latestVm.usedPercent);
   updateDetailsPanel();
 }
 
-function resetStatusBarColors(): void {
-  if (!statusItem) {
-    return;
+function getPercentColor(percent: number | null): string {
+  if (percent === null) {
+    return "#888888";
   }
 
-  statusItem.color = undefined;
-  statusItem.backgroundColor = undefined;
-}
-
-function applyUsageToneColors(usedPercent: number | null): void {
-  if (!statusItem) {
-    return;
+  if (percent >= 90) {
+    return "#ff4d4f"; // 红色
   }
-
-  if (usedPercent === null) {
-    statusItem.color = new vscode.ThemeColor("statusBarItem.prominentForeground");
-    return;
+  if (percent >= 70) {
+    return "#faad14"; // 橙色/黄色
   }
-
-  if (usedPercent >= 90) {
-    statusItem.color = new vscode.ThemeColor("statusBarItem.errorForeground");
-    statusItem.backgroundColor = new vscode.ThemeColor("statusBarItem.errorBackground");
-    return;
-  }
-
-  if (usedPercent >= 75) {
-    statusItem.color = new vscode.ThemeColor("statusBarItem.warningForeground");
-    statusItem.backgroundColor = new vscode.ThemeColor("statusBarItem.warningBackground");
-    return;
-  }
-
-  statusItem.color = "#2ea043";
+  return "#52c41a"; // 绿色
 }
 
 function buildRefreshingTooltip(): vscode.MarkdownString {
@@ -488,24 +594,16 @@ function updateDetailsPanel(): void {
 }
 
 function renderDetailsPanelHtml(): string {
-  const actions = `
-    <div class="actions">
-      <a class="action-btn" href="command:minimaxUsage.refresh">刷新</a>
-      <a class="action-btn" href="command:minimaxUsage.setApiKey">设置 Key</a>
-      <a class="action-btn danger" href="command:minimaxUsage.clearApiKey">清除 Key</a>
-    </div>
-  `;
-
   if (!hasApiKey) {
     return renderDetailsHtmlSkeleton(`
-      <div class="container animate-in">
-        <div class="empty-state">
-          <span class="icon" style="font-size: 48px;">🔑</span>
-          <h2>未配置 API Key</h2>
-          <p>请先设置 MiniMax API Key，然后再查看详细查询数据。</p>
-          <div class="actions" style="justify-content: center;">
-            <a class="btn btn-primary" href="command:minimaxUsage.setApiKey">去设置 API Key</a>
-          </div>
+      <div class="empty-state animate-in">
+        <div class="empty-icon-glow">🔑</div>
+        <h2>未配置加密密钥</h2>
+        <p>系统核心功能需要 MiniMax API Key 授权。请在控制台中输入您的访问密钥以同步数据。</p>
+        <div class="actions center">
+          <a class="btn btn-neon" href="command:minimaxUsage.setApiKey">
+            <span class="btn-text">INITIALIZE ACCESS</span>
+          </a>
         </div>
       </div>
     `);
@@ -513,14 +611,14 @@ function renderDetailsPanelHtml(): string {
 
   if (!latestVm) {
     return renderDetailsHtmlSkeleton(`
-      <div class="container animate-in">
-        <div class="empty-state">
-          <span class="icon" style="font-size: 48px;">⏳</span>
-          <h2>暂无数据</h2>
-          <p>正在等待首次查询结果，请点击下方刷新按钮。</p>
-          <div class="actions" style="justify-content: center;">
-            <a class="btn btn-primary" href="command:minimaxUsage.refresh">手动刷新数据</a>
-          </div>
+      <div class="empty-state animate-in">
+        <div class="empty-icon-glow">📡</div>
+        <h2>等待数据链路</h2>
+        <p>正在尝试连接 MiniMax 服务器并同步最新的 Token 消耗指标。请保持网络畅通。</p>
+        <div class="actions center">
+          <a class="btn btn-neon" href="command:minimaxUsage.refresh">
+            <span class="btn-text">RETRY SYNC</span>
+          </a>
         </div>
       </div>
     `);
@@ -528,129 +626,164 @@ function renderDetailsPanelHtml(): string {
 
   if (!latestVm.ok) {
     return renderDetailsHtmlSkeleton(`
-      <div class="container animate-in">
-        <div class="card error-card">
-          <div class="card-header">
-            <div class="card-title-group">
-              <span class="icon">⚠️</span>
-              <h3 class="card-title">查询失败</h3>
-            </div>
-          </div>
-          <p class="error-message">${escapeHtml(latestVm.statusLabel)}</p>
-          <div class="actions">
-            <a class="btn btn-primary" href="command:minimaxUsage.refresh">重试刷新</a>
-            <a class="btn" href="command:minimaxUsage.setApiKey">检查 Key 配置</a>
-          </div>
+      <div class="empty-state error animate-in">
+        <div class="empty-icon-glow">⚠️</div>
+        <h2>数据链路中断</h2>
+        <p class="error-msg">${escapeHtml(latestVm.statusLabel)}</p>
+        <div class="actions center">
+          <a class="btn btn-neon danger" href="command:minimaxUsage.refresh">
+            <span class="btn-text">RECONNECT</span>
+          </a>
+          <a class="btn" href="command:minimaxUsage.setApiKey">
+            <span class="btn-text">EDIT KEY</span>
+          </a>
         </div>
       </div>
     `);
   }
 
-  const windowProgress = clampPercent(latestVm.usedPercent);
-  const weeklyProgress = clampPercent(latestVm.weeklyUsedPercent);
-  const windowProgressText = latestVm.usedPercent === null ? "-" : `${latestVm.usedPercent}%`;
-  const weeklyProgressText = latestVm.weeklyUsedPercent === null ? "-" : `${latestVm.weeklyUsedPercent}%`;
-  const windowProgressRatio = `${formatNumber(latestVm.usedCount)}/${formatNumber(latestVm.totalCount)}`;
-  const weeklyProgressRatio = `${formatNumber(latestVm.weeklyUsedCount)}/${formatNumber(latestVm.weeklyTotalCount)}`;
-  const updatedAt = lastUpdatedAt ? formatDateTime(lastUpdatedAt.getTime()) : "-";
+  const usedPercent = latestVm.usedPercent ?? 0;
+  const weeklyUsedPercent = latestVm.weeklyUsedPercent ?? 0;
+  
+  const windowProgress = clampPercent(usedPercent);
+  const weeklyProgress = clampPercent(weeklyUsedPercent);
+  const windowStatus = usedPercent >= 90 ? "critical" : usedPercent >= 70 ? "warning" : "normal";
+  const weeklyStatus = weeklyUsedPercent >= 90 ? "critical" : weeklyUsedPercent >= 70 ? "warning" : "normal";
+  
+  const updatedAt = lastUpdatedAt ? formatDateTime(lastUpdatedAt.getTime()) : "N/A";
 
   return renderDetailsHtmlSkeleton(`
-    <div class="container animate-in">
-      <header class="header">
-        <h1 class="title">MiniMax Token Plan</h1>
-        <div class="header-meta">
-          <span class="badge">主模型：${escapeHtml(latestVm.primaryModelName || "-")}</span>
-          <span class="badge">窗口：${escapeHtml(latestVm.timeWindow || "-")}</span>
+    <div class="dashboard animate-in">
+      <header class="main-header">
+        <div class="logo-area">
+          <div class="logo-pulse"></div>
+          <h1 class="glow-text">MINIMAX USAGE PANEL</h1>
+        </div>
+        <div class="header-info">
+          <div class="info-tag">
+            <span class="tag-label">MODEL</span>
+            <span class="tag-value">${escapeHtml(latestVm.primaryModelName || "UNKNOWN")}</span>
+          </div>
+          <div class="info-tag">
+            <span class="tag-label">WINDOW</span>
+            <span class="tag-value">${escapeHtml(latestVm.intervalLabel || "N/A")}</span>
+          </div>
         </div>
       </header>
 
-      <div class="grid">
-        <div class="card card-primary">
+      <div class="stats-container">
+        <!-- Current Window Card -->
+        <section class="cyber-card ${windowStatus}">
+          <div class="card-glow"></div>
           <div class="card-header">
-            <div class="card-title-group">
-              <span class="icon">📊</span>
-              <h3 class="card-title">当前窗口</h3>
+            <h3 class="card-title"><span class="icon">⚡</span> CURRENT INTERVAL</h3>
+            <div class="reset-timer">
+              <span class="timer-icon">⏳</span>
+              <span class="timer-value">${escapeHtml(latestVm.resetTimestamp ? formatCountdown(latestVm.resetTimestamp) : "--:--:--")}</span>
             </div>
-            <span class="countdown">重置倒计时: ${escapeHtml(latestVm.resetTimestamp ? formatCountdown(latestVm.resetTimestamp) : "-")}</span>
           </div>
           
-          <div class="stats-grid">
-            <div class="stat-item">
-              <span class="stat-label">已使用</span>
-              <span class="stat-value used">${formatNumber(latestVm.usedCount)}</span>
+          <div class="data-grid">
+            <div class="data-item">
+              <span class="data-label">CONSUMED</span>
+              <span class="data-value highlight">${formatNumber(latestVm.usedCount)}</span>
             </div>
-            <div class="stat-item">
-              <span class="stat-label">剩余</span>
-              <span class="stat-value remaining">${formatNumber(latestVm.remainingCount)}</span>
+            <div class="data-item">
+              <span class="data-label">AVAILABLE</span>
+              <span class="data-value success">${formatNumber(latestVm.remainingCount)}</span>
             </div>
-            <div class="stat-item">
-              <span class="stat-label">总额度</span>
-              <span class="stat-value total">${formatNumber(latestVm.totalCount)}</span>
+            <div class="data-item">
+              <span class="data-label">LIMIT</span>
+              <span class="data-value">${formatNumber(latestVm.totalCount)}</span>
             </div>
           </div>
 
-          <div class="progress-section">
-            <div class="progress-info">
-              <span class="progress-ratio">${escapeHtml(windowProgressRatio)}</span>
-              <span class="progress-percent current">${escapeHtml(windowProgressText)}</span>
+          <div class="progress-wrap">
+            <div class="progress-header">
+              <span class="progress-label">RESOURCE UTILIZATION</span>
+              <span class="progress-percent ${windowStatus}">${latestVm.usedPercent}%</span>
             </div>
-            <div class="progress-bar">
-              <div class="progress-fill current" style="width:${windowProgress}%">
-                <div class="progress-glow"></div>
+            <div class="cyber-progress-bar">
+              <div class="progress-track"></div>
+              <div class="progress-thumb ${windowStatus}" style="width: ${windowProgress}%">
+                <div class="thumb-glow"></div>
               </div>
             </div>
           </div>
-        </div>
+        </section>
 
-        <div class="card card-secondary">
+        ${usedPercent >= 70 ? `
+        <!-- Risk Warning Card -->
+        <section class="cyber-card risk-alert ${windowStatus}">
+          <div class="card-glow"></div>
+          <div class="risk-content">
+            <div class="risk-icon">${usedPercent >= 90 ? '🚨' : '⚠️'}</div>
+            <div class="risk-text">
+              <h3>风险提示</h3>
+              <ul>
+                <li>当前窗口剩余仅 ${100 - usedPercent}%</li>
+                <li>${usedPercent >= 90 ? '额度即将耗尽，建议立即降低请求频率或切换模型！' : '消耗较快，请注意使用配额以避免被限流。'}</li>
+              </ul>
+            </div>
+          </div>
+        </section>
+        ` : ''}
+
+        <!-- Weekly Card -->
+        <section class="cyber-card secondary ${weeklyStatus}">
+          <div class="card-glow"></div>
           <div class="card-header">
-            <div class="card-title-group">
-              <span class="icon">🗓️</span>
-              <h3 class="card-title">本周汇总</h3>
-            </div>
-            <span class="countdown">重置倒计时: ${escapeHtml(latestVm.weeklyResetTimestamp ? formatCountdown(latestVm.weeklyResetTimestamp) : "-")}</span>
-          </div>
-
-          <div class="stats-grid">
-            <div class="stat-item">
-              <span class="stat-label">本周已用</span>
-              <span class="stat-value weekly-used">${formatNumber(latestVm.weeklyUsedCount)}</span>
-            </div>
-            <div class="stat-item">
-              <span class="stat-label">本周剩余</span>
-              <span class="stat-value weekly-remaining">${formatNumber(latestVm.weeklyRemainingCount)}</span>
-            </div>
-            <div class="stat-item">
-              <span class="stat-label">本周总额度</span>
-              <span class="stat-value weekly-total">${formatNumber(latestVm.weeklyTotalCount)}</span>
+            <h3 class="card-title"><span class="icon">🗓️</span> WEEKLY AGGREGATE</h3>
+            <div class="reset-timer">
+              <span class="timer-icon">🕒</span>
+              <span class="timer-value">${escapeHtml(latestVm.weeklyResetTimestamp ? formatCountdown(latestVm.weeklyResetTimestamp) : "--:--")}</span>
             </div>
           </div>
 
-          <div class="progress-section">
-            <div class="progress-info">
-              <span class="progress-ratio">${escapeHtml(weeklyProgressRatio)}</span>
-              <span class="progress-percent weekly">${escapeHtml(weeklyProgressText)}</span>
+          <div class="data-grid">
+            <div class="data-item">
+              <span class="data-label">USED</span>
+              <span class="data-value emphasize">${formatNumber(latestVm.weeklyUsedCount)}</span>
             </div>
-            <div class="progress-bar">
-              <div class="progress-fill weekly" style="width:${weeklyProgress}%">
-                <div class="progress-glow"></div>
+            <div class="data-item">
+              <span class="data-label">LEFT</span>
+              <span class="data-value success">${formatNumber(latestVm.weeklyRemainingCount)}</span>
+            </div>
+            <div class="data-item">
+              <span class="data-label">TOTAL</span>
+              <span class="data-value">${formatNumber(latestVm.weeklyTotalCount)}</span>
+            </div>
+          </div>
+
+          <div class="progress-wrap">
+            <div class="progress-header">
+              <span class="progress-label">WEEKLY QUOTA</span>
+              <span class="progress-percent ${weeklyStatus}">${latestVm.weeklyUsedPercent}%</span>
+            </div>
+            <div class="cyber-progress-bar">
+              <div class="progress-track"></div>
+              <div class="progress-thumb secondary ${weeklyStatus}" style="width: ${weeklyProgress}%">
+                <div class="thumb-glow"></div>
               </div>
             </div>
           </div>
-        </div>
+        </section>
       </div>
 
-      <footer class="footer">
-        <div class="update-time">最后更新：${escapeHtml(updatedAt)}</div>
-        <div class="actions">
-          <a class="btn btn-primary" href="command:minimaxUsage.refresh">
-            <span class="icon">🔄</span> 刷新
+      <footer class="cyber-footer">
+        <div class="system-status">
+          <div class="status-indicator"></div>
+          <span class="last-update">SYNCED AT: ${updatedAt}</span>
+        </div>
+        <div class="cyber-actions">
+          <a class="action-link neon" href="command:minimaxUsage.refresh">
+            <span class="link-icon">🔄</span> SYNC DATA
           </a>
-          <a class="btn" href="command:minimaxUsage.setApiKey">
-            <span class="icon">🔑</span> 设置 Key
+          <a class="action-link" href="command:minimaxUsage.setApiKey">
+            <span class="link-icon">🔑</span> KEY CONFIG
           </a>
-          <a class="btn btn-danger" href="command:minimaxUsage.clearApiKey">
-            <span class="icon">🗑️</span> 清除 Key
+          <a class="action-link danger" href="command:minimaxUsage.clearApiKey">
+            <span class="link-icon">🗑️</span> RESET
           </a>
         </div>
       </footer>
@@ -666,339 +799,456 @@ function renderDetailsHtmlSkeleton(innerHtml: string): string {
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <style>
     :root {
-      --primary: #3b82f6;
+      --bg-dark: #05070a;
+      --panel-bg: rgba(13, 17, 23, 0.7);
+      --primary: #00d4ff;
+      --secondary: #a855f7;
       --success: #10b981;
       --warning: #f59e0b;
-      --danger: #ef4444;
-      --card-bg: color-mix(in srgb, var(--vscode-editor-background) 95%, #fff 5%);
-      --card-border: color-mix(in srgb, var(--vscode-editor-background) 80%, #777 20%);
-      --text-main: var(--vscode-editor-foreground);
-      --text-dim: var(--vscode-descriptionForeground);
-      --glass-bg: rgba(255, 255, 255, 0.03);
-      --glass-border: rgba(255, 255, 255, 0.1);
+      --danger: #ff2e63;
+      --text-bright: #ffffff;
+      --text-dim: #94a3b8;
+      --border: rgba(255, 255, 255, 0.1);
+      --card-blur: blur(12px);
     }
 
     body {
       margin: 0;
-      padding: 20px;
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      color: var(--text-main);
-      background: var(--vscode-editor-background);
-      line-height: 1.6;
+      padding: 0;
+      font-family: 'Inter', -apple-system, system-ui, sans-serif;
+      color: var(--text-dim);
+      background-color: var(--bg-dark);
+      background-image: 
+        radial-gradient(circle at 50% -20%, rgba(0, 212, 255, 0.15), transparent),
+        linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+      background-size: 100% 100%, 30px 30px, 30px 30px;
+      line-height: 1.5;
+      min-height: 100vh;
       overflow-x: hidden;
     }
 
-    .container {
-      max-width: 800px;
+    .dashboard {
+      max-width: 900px;
       margin: 0 auto;
+      padding: 32px 24px;
     }
 
     .animate-in {
-      animation: fadeInScale 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+      animation: slideUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
     }
 
-    @keyframes fadeInScale {
-      from { opacity: 0; transform: scale(0.98) translateY(10px); }
-      to { opacity: 1; transform: scale(1) translateY(0); }
+    @keyframes slideUp {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
     }
 
-    .header {
-      margin-bottom: 24px;
-    }
-
-    .title {
-      font-size: 24px;
-      font-weight: 800;
-      margin: 0 0 12px;
-      background: linear-gradient(135deg, var(--primary), #8b5cf6);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      letter-spacing: -0.5px;
-    }
-
-    .header-meta {
+    /* Header Styles */
+    .main-header {
       display: flex;
-      gap: 12px;
-      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: flex-end;
+      margin-bottom: 40px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid var(--border);
     }
 
-    .badge {
-      font-size: 11px;
-      padding: 4px 10px;
-      background: var(--glass-bg);
-      border: 1px solid var(--glass-border);
-      border-radius: 6px;
-      color: var(--text-dim);
-    }
-
-    .grid {
-      display: grid;
+    .logo-area {
+      display: flex;
+      align-items: center;
       gap: 16px;
-      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
     }
 
-    .card {
-      background: var(--card-bg);
-      border: 1px solid var(--card-border);
-      border-radius: 14px;
-      padding: 24px;
-      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.12);
-      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-      position: relative;
-      overflow: hidden;
+    .logo-pulse {
+      width: 12px;
+      height: 12px;
+      background: var(--primary);
+      border-radius: 50%;
+      box-shadow: 0 0 15px var(--primary);
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.5); opacity: 0.5; }
+      100% { transform: scale(1); opacity: 1; }
+    }
+
+    .glow-text {
+      font-size: 20px;
+      font-weight: 900;
+      letter-spacing: 4px;
+      color: var(--text-bright);
+      margin: 0;
+      text-shadow: 0 0 10px rgba(0, 212, 255, 0.5);
+    }
+
+    .header-info {
+      display: flex;
+      gap: 24px;
+    }
+
+    .info-tag {
       display: flex;
       flex-direction: column;
+      align-items: flex-end;
     }
 
-    .card:hover {
-      border-color: var(--primary);
-      transform: translateY(-2px);
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.16);
+    .tag-label {
+      font-size: 9px;
+      font-weight: 800;
+      color: var(--primary);
+      letter-spacing: 1px;
     }
+
+    .tag-value {
+      font-size: 13px;
+      color: var(--text-bright);
+      font-weight: 600;
+    }
+
+    /* Card Styles */
+    .stats-container {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+      gap: 24px;
+    }
+
+    .cyber-card {
+      background: var(--panel-bg);
+      backdrop-filter: var(--card-blur);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 30px;
+      position: relative;
+      overflow: hidden;
+      transition: all 0.4s ease;
+    }
+
+    .cyber-card:hover {
+      border-color: rgba(255, 255, 255, 0.3);
+      background: rgba(255, 255, 255, 0.05);
+      transform: translateY(-5px);
+    }
+
+    .card-glow {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 4px;
+      background: linear-gradient(90deg, var(--primary), var(--secondary));
+      opacity: 0.6;
+    }
+
+    .cyber-card.critical .card-glow { background: var(--danger); }
+    .cyber-card.warning .card-glow { background: var(--warning); }
 
     .card-header {
       display: flex;
       justify-content: space-between;
-      align-items: flex-start;
       margin-bottom: 24px;
     }
 
-    .card-title-group {
+    .card-title {
+      font-size: 14px;
+      font-weight: 800;
+      color: var(--text-bright);
+      margin: 0;
+      letter-spacing: 1px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .reset-timer {
+      background: rgba(0, 0, 0, 0.3);
+      padding: 4px 12px;
+      border-radius: 20px;
+      border: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .timer-icon { font-size: 12px; }
+    .timer-value {
+      font-family: 'SF Mono', monospace;
+      font-size: 11px;
+      color: var(--warning);
+      font-weight: bold;
+    }
+
+    .data-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      margin-bottom: 32px;
+    }
+
+    .data-item {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .data-label {
+      font-size: 9px;
+      font-weight: 700;
+      color: var(--text-dim);
+      letter-spacing: 0.5px;
+    }
+
+    .data-value {
+      font-size: 18px;
+      font-weight: 800;
+      color: var(--text-bright);
+      font-family: 'SF Mono', monospace;
+    }
+
+    .data-value.highlight { color: var(--primary); }
+    .data-value.emphasize { color: var(--secondary); }
+    .data-value.success { color: var(--success); }
+
+    /* Progress Styles */
+    .progress-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .progress-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .progress-label {
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--text-dim);
+    }
+
+    .progress-percent {
+      font-size: 16px;
+      font-weight: 900;
+      color: var(--primary);
+    }
+
+    .progress-percent.critical { color: var(--danger); }
+    .progress-percent.warning { color: var(--warning); }
+
+    .cyber-progress-bar {
+      height: 6px;
+      position: relative;
+    }
+
+    .progress-track {
+      position: absolute;
+      inset: 0;
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 3px;
+    }
+
+    .progress-thumb {
+      position: absolute;
+      left: 0;
+      top: 0;
+      height: 100%;
+      border-radius: 3px;
+      background: linear-gradient(90deg, #3b82f6, var(--primary));
+      transition: width 1s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+
+    .progress-thumb.secondary { background: linear-gradient(90deg, #8b5cf6, var(--secondary)); }
+    .progress-thumb.critical { background: var(--danger); }
+    .progress-thumb.warning { background: var(--warning); }
+
+    .thumb-glow {
+      position: absolute;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: 20px;
+      background: inherit;
+      filter: blur(8px);
+      box-shadow: 0 0 10px rgba(0, 212, 255, 0.5);
+    }
+
+    /* Risk Alert Styles */
+    .risk-alert {
+      grid-column: 1 / -1;
+      padding: 20px 30px;
+      display: flex;
+      align-items: center;
+      background: rgba(245, 158, 11, 0.05);
+      border-color: rgba(245, 158, 11, 0.3);
+    }
+    
+    .risk-alert.critical {
+      background: rgba(255, 46, 99, 0.05);
+      border-color: rgba(255, 46, 99, 0.3);
+    }
+    
+    .risk-content {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      width: 100%;
+    }
+    
+    .risk-icon {
+      font-size: 28px;
+      filter: drop-shadow(0 0 8px var(--warning));
+    }
+    
+    .risk-alert.critical .risk-icon {
+      filter: drop-shadow(0 0 8px var(--danger));
+    }
+    
+    .risk-text h3 {
+      margin: 0 0 4px 0;
+      font-size: 14px;
+      color: var(--text-bright);
+    }
+    
+    .risk-text ul {
+      margin: 0;
+      padding-left: 20px;
+      font-size: 13px;
+      color: var(--text-dim);
+    }
+    
+    .risk-text li {
+      margin-bottom: 2px;
+    }
+
+    /* Footer Styles */
+    .cyber-footer {
+      margin-top: 60px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 24px 0;
+      border-top: 1px solid var(--border);
+    }
+
+    .system-status {
       display: flex;
       align-items: center;
       gap: 10px;
     }
 
-    .icon {
-      font-size: 20px;
-    }
-
-    .card-title {
-      font-size: 16px;
-      font-weight: 700;
-      margin: 0;
-      color: var(--text-main);
-    }
-
-    .countdown {
-      font-size: 11px;
-      color: var(--warning);
-      background: color-mix(in srgb, var(--warning) 12%, transparent);
-      padding: 4px 8px;
-      border-radius: 6px;
-      font-weight: 600;
-    }
-
-    .stats-grid {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 12px;
-      margin-bottom: 28px;
-    }
-
-    .stat-item {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-
-    .stat-label {
-      font-size: 10px;
-      color: var(--text-dim);
-      text-transform: uppercase;
-      letter-spacing: 0.8px;
-      font-weight: 600;
-    }
-
-    .stat-value {
-      font-size: 18px;
-      font-weight: 700;
-      font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
-    }
-
-    .stat-value.used { color: var(--danger); }
-    .stat-value.remaining { color: var(--success); }
-    .stat-value.total { color: var(--primary); }
-    .stat-value.weekly-used { color: #ec4899; }
-    .stat-value.weekly-remaining { color: #10b981; }
-    .stat-value.weekly-total { color: #64748b; }
-
-    .progress-section {
-      margin-top: auto;
-    }
-
-    .progress-info {
-      display: flex;
-      justify-content: space-between;
-      align-items: baseline;
-      font-size: 12px;
-      margin-bottom: 10px;
-    }
-
-    .progress-ratio {
-      color: var(--text-dim);
-      font-family: 'SF Mono', monospace;
-      font-size: 11px;
-    }
-
-    .progress-percent {
-      font-weight: 800;
-      font-size: 14px;
-    }
-
-    .progress-percent.current { color: var(--primary); }
-    .progress-percent.weekly { color: var(--danger); }
-
-    .progress-bar {
-      height: 10px;
-      background: color-mix(in srgb, var(--text-dim) 15%, transparent);
-      border-radius: 5px;
-      overflow: hidden;
-      position: relative;
-    }
-
-    .progress-fill {
-      height: 100%;
-      border-radius: 5px;
-      transition: width 1s cubic-bezier(0.34, 1.56, 0.64, 1);
-      position: relative;
-    }
-
-    .progress-fill.current {
-      background: linear-gradient(90deg, #60a5fa, #3b82f6);
-    }
-
-    .progress-fill.weekly {
-      background: linear-gradient(90deg, #fb923c, #ef4444);
-    }
-
-    .progress-glow {
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: linear-gradient(
-        90deg,
-        transparent,
-        rgba(255, 255, 255, 0.2),
-        transparent
-      );
-      animation: shimmer 2s infinite;
-    }
-
-    @keyframes shimmer {
-      0% { transform: translateX(-100%); }
-      100% { transform: translateX(100%); }
-    }
-
-    .footer {
-      margin-top: 40px;
-      padding-top: 24px;
-      border-top: 1px solid var(--card-border);
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      flex-wrap: wrap;
-      gap: 20px;
-    }
-
-    .update-time {
-      font-size: 12px;
-      color: var(--text-dim);
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-
-    .update-time::before {
-      content: '';
-      display: inline-block;
-      width: 6px;
-      height: 6px;
+    .status-indicator {
+      width: 8px;
+      height: 8px;
       background: var(--success);
       border-radius: 50%;
       box-shadow: 0 0 8px var(--success);
     }
 
-    .actions {
-      display: flex;
-      gap: 10px;
+    .last-update {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
     }
 
-    .btn {
-      padding: 8px 16px;
-      border-radius: 8px;
-      font-size: 13px;
-      font-weight: 600;
+    .cyber-actions {
+      display: flex;
+      gap: 16px;
+    }
+
+    .action-link {
+      color: var(--text-dim);
       text-decoration: none;
-      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      font-size: 11px;
+      font-weight: 800;
       display: flex;
       align-items: center;
-      gap: 8px;
-      border: 1px solid var(--card-border);
-      color: var(--text-main);
-      background: var(--glass-bg);
-      cursor: pointer;
+      gap: 6px;
+      padding: 6px 14px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      transition: all 0.2s;
     }
 
-    .btn:hover {
-      background: var(--glass-border);
-      transform: translateY(-2px);
-      border-color: var(--text-dim);
+    .action-link:hover {
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text-bright);
+      border-color: var(--text-bright);
     }
 
-    .btn:active {
-      transform: translateY(0);
+    .action-link.neon {
+      color: var(--primary);
+      border-color: rgba(0, 212, 255, 0.3);
     }
 
-    .btn-primary {
-      background: var(--primary);
-      color: white;
+    .action-link.neon:hover {
+      box-shadow: 0 0 15px rgba(0, 212, 255, 0.2);
       border-color: var(--primary);
     }
 
-    .btn-primary:hover {
-      background: #2563eb;
-      box-shadow: 0 4px 16px rgba(37, 99, 235, 0.4);
-    }
-
-    .btn-danger:hover {
-      background: var(--danger);
-      color: white;
+    .action-link.danger:hover {
+      color: var(--danger);
       border-color: var(--danger);
-      box-shadow: 0 4px 16px rgba(239, 68, 68, 0.4);
     }
 
+    /* Empty State Styles */
     .empty-state {
-      padding: 60px 20px;
+      max-width: 500px;
+      margin: 100px auto;
       text-align: center;
-      background: var(--card-bg);
-      border-radius: 16px;
-      border: 1px dashed var(--card-border);
+      background: var(--panel-bg);
+      backdrop-filter: var(--card-blur);
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      padding: 60px 40px;
+    }
+
+    .empty-icon-glow {
+      font-size: 64px;
+      margin-bottom: 24px;
+      filter: drop-shadow(0 0 15px var(--primary));
     }
 
     .empty-state h2 {
-      font-size: 20px;
-      margin-bottom: 12px;
-      color: var(--text-main);
-    }
-
-    .empty-state p {
-      color: var(--text-dim);
-      margin-bottom: 24px;
-    }
-
-    .error-card {
-      background: color-mix(in srgb, var(--danger) 8%, var(--card-bg));
-      border: 1px solid color-mix(in srgb, var(--danger) 30%, var(--card-border));
-    }
-
-    .error-message {
-      color: var(--danger);
-      font-weight: 600;
+      font-size: 24px;
+      color: var(--text-bright);
       margin-bottom: 16px;
     }
+
+    .error-msg {
+      color: var(--danger);
+      font-weight: 600;
+      background: rgba(255, 46, 99, 0.1);
+      padding: 12px;
+      border-radius: 8px;
+    }
+
+    .btn-neon {
+      background: var(--primary);
+      color: #000;
+      padding: 12px 32px;
+      border-radius: 12px;
+      font-weight: 900;
+      text-decoration: none;
+      display: inline-block;
+      margin-top: 24px;
+      transition: all 0.3s;
+      box-shadow: 0 0 20px rgba(0, 212, 255, 0.4);
+    }
+
+    .btn-neon:hover {
+      transform: scale(1.05);
+      box-shadow: 0 0 30px rgba(0, 212, 255, 0.6);
+    }
+
+    .btn-neon.danger {
+      background: var(--danger);
+      box-shadow: 0 0 20px rgba(255, 46, 99, 0.4);
+    }
+    
+    .center { justify-content: center; }
   </style>
 </head>
 <body>
@@ -1181,6 +1431,11 @@ function buildUsageViewModel(result: RemainsResult): UsageViewModel {
       typeof primaryModel.remains_time === "number"
         ? formatDuration(primaryModel.remains_time)
         : "",
+    intervalLabel: hasTimeWindow
+      ? formatDurationCompact(
+          (primaryModel.end_time as number) - (primaryModel.start_time as number),
+        )
+      : "",
     resetTimestamp:
       typeof primaryModel.remains_time === "number"
         ? Date.now() + primaryModel.remains_time
@@ -1343,6 +1598,37 @@ function formatDuration(milliseconds: number): string {
   }
 
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function formatDurationCompact(milliseconds: number): string {
+  const totalSeconds = Math.max(0, Math.ceil(milliseconds / 1000));
+  const days = Math.floor(totalSeconds / (3600 * 24));
+  const hours = Math.floor((totalSeconds % (3600 * 24)) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+
+  if (days > 0) {
+    return `${days}天`;
+  }
+  if (hours > 0) {
+    return `${hours}小时`;
+  }
+  return `${minutes}分钟`;
+}
+
+function formatCountdownFriendly(targetTimestamp: number): string {
+  const diff = Math.max(targetTimestamp - Date.now(), 0);
+  const totalSeconds = Math.ceil(diff / 1000);
+  const days = Math.floor(totalSeconds / (24 * 3600));
+  const hours = Math.floor((totalSeconds % (24 * 3600)) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+
+  if (days > 0) {
+    return `${days}d${hours}h`;
+  }
+  if (hours > 0) {
+    return `${hours}h${minutes}m`;
+  }
+  return `${minutes}m`;
 }
 
 function formatCountdown(targetTimestamp: number): string {
