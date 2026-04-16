@@ -46,8 +46,8 @@
    ```
 2. 执行打包命令：
    ```bash
-   # 使用 npx 运行 vsce
-   npx @vscode/vsce package
+   # 使用 package.json 中配置好的 script
+   npm run package
    ```
 3. 打包完成后，在该目录下会生成一个 `minimax-usage-statusbar-x.x.x.vsix` 文件。
 4. **手动安装**：在 VS Code 插件面板点击 `...` -> `Install from VSIX...`，选择该文件即可。

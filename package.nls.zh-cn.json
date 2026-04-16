@@ -1,0 +1,19 @@
+{
+  "extension.displayName": "MiniMax 用量状态栏",
+  "extension.description": "查询 MiniMax Token Plan 用量，并在 VS Code 状态栏中显示详细统计。",
+  "command.refresh.title": "MiniMax 用量：刷新",
+  "command.showDetails.title": "MiniMax 用量：查看详情",
+  "command.setApiKey.title": "MiniMax 用量：设置 API Key",
+  "command.clearApiKey.title": "MiniMax 用量：清除 API Key",
+  "command.copyRawResponse.title": "MiniMax 用量：复制原始响应",
+  "configuration.title": "MiniMax 用量",
+  "configuration.refreshIntervalSeconds.description": "自动刷新间隔，单位为秒。",
+  "configuration.showWeeklyInStatusBar.description": "在状态栏文本中显示本周用量摘要。",
+  "configuration.detailModelLimit.description": "状态栏 tooltip 和详情面板中显示的模型数量。",
+  "configuration.statusBarAlignment.description": "MiniMax 用量状态项在状态栏中的对齐方式。",
+  "configuration.requestTimeoutMs.description": "HTTP 请求超时时间，单位为毫秒。",
+  "configuration.language.description": "扩展运行时界面的语言。命令标题和设置描述等静态文案仍跟随 VS Code 显示语言。",
+  "configuration.language.auto": "跟随 VS Code 显示语言。",
+  "configuration.language.zhCN": "运行时文案固定为简体中文。",
+  "configuration.language.en": "运行时文案固定为英文。"
+}

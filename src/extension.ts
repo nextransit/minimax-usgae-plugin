@@ -61,12 +61,16 @@ type RemainsResult = {
   raw: unknown;
 };
 
+type LanguagePreference = "auto" | "zh-CN" | "en";
+type UiLanguage = "zh-CN" | "en";
+
 type ExtensionConfig = {
   refreshIntervalSeconds: number;
   showWeeklyInStatusBar: boolean;
   detailModelLimit: number;
   statusBarAlignment: "left" | "right";
   requestTimeoutMs: number;
+  language: LanguagePreference;
 };
 
 type StatusItemSpec = {
@@ -98,24 +102,6 @@ let isRefreshing = false;
 let hasAlertedHighRisk = false;
 let detailsPanel: vscode.WebviewPanel | undefined;
 
-const dateTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
-  timeZone: "Asia/Shanghai",
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit",
-  hour: "2-digit",
-  minute: "2-digit",
-  second: "2-digit",
-  hour12: false,
-});
-
-const timeFormatter = new Intl.DateTimeFormat("zh-CN", {
-  timeZone: "Asia/Shanghai",
-  hour: "2-digit",
-  minute: "2-digit",
-  hour12: false,
-});
-
 const emptyUsageViewModel = {
   primaryModelName: "",
   timeWindow: "",
@@ -135,9 +121,159 @@ const emptyUsageViewModel = {
   models: [],
 } satisfies Omit<UsageViewModel, "ok" | "statusLabel" | "raw">;
 
+function resolveUiLanguage(config: ExtensionConfig = readConfig()): UiLanguage {
+  if (config.language === "zh-CN" || config.language === "en") {
+    return config.language;
+  }
+
+  return vscode.env.language.toLowerCase().startsWith("zh") ? "zh-CN" : "en";
+}
+
+function getRuntimeStrings(config: ExtensionConfig = readConfig()) {
+  const language = resolveUiLanguage(config);
+  const isEn = language === "en";
+
+  return {
+    language,
+    isEn,
+    outputChannelName: "MiniMax Usage",
+    inputBoxTitle: "MiniMax Usage",
+    inputBoxPrompt: isEn ? "Enter MiniMax API Key" : "输入 MiniMax API Key",
+    inputBoxPlaceholder: "API Key",
+    infoApiKeySaved: isEn ? "MiniMax API key saved" : "MiniMax API Key 已保存",
+    infoApiKeyCleared: isEn ? "MiniMax API key cleared" : "MiniMax API Key 已清除",
+    infoRawCopied: isEn ? "MiniMax raw response copied to clipboard" : "MiniMax 原始响应已复制到剪贴板",
+    warnNoRawResponse: isEn ? "There is no raw response to copy yet" : "当前没有可复制的原始响应",
+    warnSetApiKeyFirst: isEn ? "Please run \"MiniMax Usage: Set API Key\" first" : "请先运行 “MiniMax Usage: Set API Key”",
+    warnRiskLowQuota:
+      isEn
+        ? "MiniMax risk warning: only "
+        : "MiniMax 风险提示: 当前窗口剩余仅 ",
+    warnRiskLowQuotaSuffix:
+      isEn
+        ? "% left in the current window. Consider lowering request frequency or switching models."
+        : "%，即将耗尽！建议降低请求频率或切换模型。",
+    errorQueryFailedPrefix: isEn ? "MiniMax query failed: " : "MiniMax 查询失败：",
+    errorQueryExceptionPrefix: isEn ? "MiniMax query error: " : "MiniMax 查询异常：",
+    errorUnknown: isEn ? "Unknown error" : "未知错误",
+    statusQuerying: isEn ? "$(sync~spin) MiniMax: Querying..." : "$(sync~spin) MiniMax 查询中...",
+    statusSetApiKey: isEn ? "$(key) MiniMax: Set API Key" : "$(key) MiniMax: 设置 API Key",
+    statusWaitingRefresh: isEn ? "$(sync) MiniMax: Waiting to refresh" : "$(sync) MiniMax: 等待刷新",
+    statusWeekly: isEn ? "  Week: " : "  每周: ",
+    tooltipTitle: "MiniMax Token Plan",
+    tooltipRefreshing: isEn ? "$(sync~spin) Refreshing data..." : "$(sync~spin) 正在刷新数据...",
+    tooltipWaiting: isEn ? "Waiting for the first refresh.  \n" : "等待首次刷新。  \n",
+    tooltipMissingKey: isEn ? "API key is not configured.  \n" : "未配置 API Key。  \n",
+    actionRefresh: isEn ? "Refresh" : "刷新",
+    actionRefreshNow: isEn ? "Refresh now" : "立即刷新",
+    actionSetKey: isEn ? "Set Key" : "设置 Key",
+    actionSetApiKey: isEn ? "Set API Key" : "设置 API Key",
+    actionClearKey: isEn ? "Clear Key" : "清除 Key",
+    actionCopyRaw: isEn ? "Copy raw response" : "复制原始响应",
+    detailsPanelTitle: isEn ? "MiniMax Usage Details" : "MiniMax 用量详情",
+    detailTooltipHeading: isEn ? "MiniMax Token Plan Details" : "MiniMax Token Plan 详细信息",
+    detailStatus: isEn ? "Status" : "状态",
+    detailPrimaryModel: isEn ? "Primary model" : "主模型",
+    detailTimeWindow: isEn ? "Time window" : "时间窗口",
+    detailResetCountdown: isEn ? "Window reset countdown" : "窗口重置倒计时",
+    detailMetric: isEn ? "Metric" : "指标",
+    detailValue: isEn ? "Value" : "数值",
+    detailUsed: isEn ? "Used" : "已使用",
+    detailRemaining: isEn ? "Remaining" : "剩余",
+    detailTotal: isEn ? "Total quota" : "总额度",
+    detailWindowProgress: isEn ? "Window progress" : "窗口进度",
+    detailWeeklyUsed: isEn ? "Weekly used" : "本周已使用",
+    detailWeeklyRemaining: isEn ? "Weekly remaining" : "本周剩余",
+    detailWeeklyTotal: isEn ? "Weekly total" : "本周总额度",
+    detailWeeklyProgress: isEn ? "Weekly progress" : "本周进度",
+    detailWeeklyResetCountdown: isEn ? "Weekly reset countdown" : "本周重置倒计时",
+    detailUpdatedAt: isEn ? "Updated at" : "更新时间",
+    detailModelDetails: isEn ? "Model details" : "模型明细",
+    detailModelListTitle: (limit: number) =>
+      isEn ? `Model details (top ${limit} items)` : `模型明细（前 ${limit} 项）`,
+    detailTopItemsLabel: isEn ? "top" : "前",
+    detailItemsSuffix: isEn ? "items" : "项",
+    unknown: isEn ? "Unknown" : "未知",
+    unknownModel: isEn ? "Unknown Model" : "未知模型",
+    labelSeparator: isEn ? ": " : "：",
+    timeZoneSuffix: isEn ? " (UTC+8)" : "（UTC+8）",
+    panelUnconfiguredKey: isEn ? "Unconfigured API Key" : "未配置加密密钥",
+    panelUnconfiguredDesc:
+      isEn
+        ? "System core features require MiniMax API Key authorization. Please enter your access key in the console to sync data."
+        : "系统核心功能需要 MiniMax API Key 授权。请在控制台中输入您的访问密钥以同步数据。",
+    panelInitAccess: isEn ? "INITIALIZE ACCESS" : "配置密钥",
+    panelWaitingData: isEn ? "Waiting for Data Link" : "等待数据链路",
+    panelWaitingDesc:
+      isEn
+        ? "Attempting to connect to MiniMax servers and sync the latest Token consumption metrics. Please ensure network connectivity."
+        : "正在尝试连接 MiniMax 服务器并同步最新的 Token 消耗指标。请保持网络畅通。",
+    panelRetrySync: isEn ? "RETRY SYNC" : "重试同步",
+    panelDataBroken: isEn ? "Data Link Broken" : "数据链路中断",
+    panelReconnect: isEn ? "RECONNECT" : "重新连接",
+    panelEditKey: isEn ? "EDIT KEY" : "修改密钥",
+    panelTitle: isEn ? "MINIMAX USAGE PANEL" : "MINIMAX 用量监控",
+    panelModel: isEn ? "MODEL" : "当前模型",
+    panelWindow: isEn ? "WINDOW" : "时间窗口",
+    panelCurrentInterval: isEn ? "CURRENT INTERVAL" : "当前周期",
+    panelConsumed: isEn ? "CONSUMED" : "已使用",
+    panelAvailable: isEn ? "AVAILABLE" : "剩余量",
+    panelLimit: isEn ? "LIMIT" : "总配额",
+    panelResourceUtil: isEn ? "RESOURCE UTILIZATION" : "资源使用率",
+    panelWeeklyAggregate: isEn ? "WEEKLY AGGREGATE" : "本周累计",
+    panelUsed: isEn ? "USED" : "已使用",
+    panelLeft: isEn ? "LEFT" : "剩余量",
+    panelTotal: isEn ? "TOTAL" : "总额度",
+    panelWeeklyQuota: isEn ? "WEEKLY QUOTA" : "本周进度",
+    panelModelDetails: isEn ? "MODEL DETAILS" : "模型明细",
+    panelTopItems: isEn ? "TOP" : "前",
+    panelItemsSuffix: isEn ? "ITEMS" : "项",
+    panelPerModelHint: isEn ? "Expand to inspect per-model quotas" : "展开查看各模型额度",
+    panelPerModelEmpty: isEn ? "No model detail data available right now." : "当前暂无模型明细数据。",
+    panelModelName: isEn ? "MODEL" : "模型",
+    panelModelUsed: isEn ? "USED" : "已使用",
+    panelModelRemaining: isEn ? "LEFT" : "剩余",
+    panelModelTotal: isEn ? "TOTAL" : "总额度",
+    panelModelWindow: isEn ? "WINDOW" : "时间窗口",
+    panelUpdatedAt: isEn ? "UPDATED AT" : "更新时间",
+    panelSyncedAt: isEn ? "SYNCED AT: " : "最后同步: ",
+    panelSyncData: isEn ? "SYNC DATA" : "刷新数据",
+    panelKeyConfig: isEn ? "KEY CONFIG" : "配置密钥",
+    panelReset: isEn ? "RESET" : "清除缓存",
+    panelRiskTitle: isEn ? "Risk Warning" : "风险提示",
+    panelRiskRemaining: isEn ? "Current window remaining only " : "当前窗口剩余仅 ",
+    panelRiskExhausted:
+      isEn
+        ? "Quota is almost exhausted. Suggest lowering request frequency or switching models!"
+        : "额度即将耗尽，建议立即降低请求频率或切换模型！",
+  panelRiskFast:
+  isEn
+  ? "Consuming quickly. Please monitor usage to avoid rate limits."
+  : "消耗较快，请注意使用配额以避免被限流。",
+  languageSwitchLabel: isEn ? "Language" : "语言",
+  languageZhCN: isEn ? "中文" : "中文",
+  languageEn: isEn ? "English" : "English",
+  validationMissingKey: isEn ? "Missing API key" : "缺少 API Key",
+    validationInvalidKey: isEn ? "Invalid API key format" : "API Key 格式无效",
+    validationShortKey: isEn ? "API key is too short" : "API Key 长度不足",
+    fetchSummarySuccess: isEn ? "Success" : "查询成功",
+    fetchSummaryCheckApiKey: isEn ? "Please check whether the API key is correct" : "请检查 API Key 是否正确",
+    fetchSummaryUnknownResponse: isEn ? "MiniMax returned an unrecognized response" : "MiniMax 返回了未识别响应",
+    fetchSummaryRequestFailed: isEn ? "Failed to request MiniMax" : "请求 MiniMax 失败",
+    fetchSummaryTimeout: isEn ? "Request timed out, please retry" : "请求超时，请重试",
+    invalidJsonMessage: (statusCode: number) =>
+      isEn ? `MiniMax returned invalid JSON (HTTP ${statusCode})` : `MiniMax 返回了无效 JSON（HTTP ${statusCode}）`,
+    durationDay: isEn ? "d" : "天",
+    durationHour: isEn ? "h" : "小时",
+    durationMinute: isEn ? "m" : "分钟",
+    webviewLang: isEn ? "en" : "zh-CN",
+    localeTag: isEn ? "en-US" : "zh-CN",
+  } as const;
+}
+
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   contextRef = context;
-  output = vscode.window.createOutputChannel("MiniMax Usage");
+  output = vscode.window.createOutputChannel(getRuntimeStrings().outputChannelName);
   context.subscriptions.push(output);
 
   registerCommands(context);
@@ -156,13 +292,22 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
 
       const alignmentChanged = event.affectsConfiguration("minimaxUsage.statusBarAlignment");
+      const languageChanged = event.affectsConfiguration("minimaxUsage.language");
       if (alignmentChanged) {
         recreateStatusBarItem();
       }
 
-      restartRefreshTimer();
-      updateStatusBar();
-    }),
+  if (languageChanged && latestRawResponse) {
+    const rebuiltVm = rebuildUsageViewModelFromRaw(latestRawResponse);
+    if (rebuiltVm) {
+      latestVm = rebuiltVm;
+    }
+  }
+
+  restartRefreshTimer();
+  updateStatusBar();
+  updateDetailsPanel();
+}),
   );
 
   await refreshUsage("startup");
@@ -195,10 +340,11 @@ export function deactivate(): void {
 function registerCommands(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand("minimaxUsage.setApiKey", async () => {
+      const strings = getRuntimeStrings();
       const input = await vscode.window.showInputBox({
-        title: "MiniMax Usage",
-        prompt: "输入 MiniMax API Key",
-        placeHolder: "API Key",
+        title: strings.inputBoxTitle,
+        prompt: strings.inputBoxPrompt,
+        placeHolder: strings.inputBoxPlaceholder,
         password: true,
         ignoreFocusOut: true,
       });
@@ -216,20 +362,21 @@ function registerCommands(context: vscode.ExtensionContext): void {
 
       await context.secrets.store(SECRET_API_KEY, apiKey);
       hasApiKey = true;
-      log("API Key 已更新");
-      vscode.window.showInformationMessage("MiniMax API Key 已保存");
+      log("API key updated");
+      vscode.window.showInformationMessage(strings.infoApiKeySaved);
       await refreshUsage("manual");
     }),
 
     vscode.commands.registerCommand("minimaxUsage.clearApiKey", async () => {
+      const strings = getRuntimeStrings();
       await context.secrets.delete(SECRET_API_KEY);
       hasApiKey = false;
       latestVm = null;
       latestRawResponse = null;
       lastUpdatedAt = null;
-      log("API Key 已清除");
+      log("API key cleared");
       updateStatusBar();
-      vscode.window.showInformationMessage("MiniMax API Key 已清除");
+      vscode.window.showInformationMessage(strings.infoApiKeyCleared);
     }),
 
     vscode.commands.registerCommand("minimaxUsage.refresh", async () => {
@@ -241,13 +388,14 @@ function registerCommands(context: vscode.ExtensionContext): void {
     }),
 
     vscode.commands.registerCommand("minimaxUsage.copyRawResponse", async () => {
+      const strings = getRuntimeStrings();
       if (!latestRawResponse) {
-        vscode.window.showWarningMessage("当前没有可复制的原始响应");
+        vscode.window.showWarningMessage(strings.warnNoRawResponse);
         return;
       }
 
       await vscode.env.clipboard.writeText(JSON.stringify(latestRawResponse, null, 2));
-      vscode.window.showInformationMessage("MiniMax 原始响应已复制到剪贴板");
+      vscode.window.showInformationMessage(strings.infoRawCopied);
     }),
   );
 }
@@ -353,6 +501,8 @@ async function refreshUsage(reason: "startup" | "auto" | "manual"): Promise<void
     return;
   }
 
+  const strings = getRuntimeStrings();
+
   const apiKey = (await contextRef.secrets.get(SECRET_API_KEY))?.trim() ?? "";
   hasApiKey = Boolean(apiKey);
 
@@ -363,7 +513,7 @@ async function refreshUsage(reason: "startup" | "auto" | "manual"): Promise<void
     updateStatusBar();
 
     if (reason === "manual") {
-      void vscode.window.showWarningMessage("请先运行 “MiniMax Usage: Set API Key”");
+      void vscode.window.showWarningMessage(strings.warnSetApiKeyFirst);
     }
 
     return;
@@ -393,13 +543,15 @@ async function refreshUsage(reason: "startup" | "auto" | "manual"): Promise<void
     lastUpdatedAt = new Date();
 
     const statusCodeLabel = result.statusCode === null ? "N/A" : String(result.statusCode);
-    log(`刷新完成 [${reason}] ok=${result.ok} status=${statusCodeLabel} summary=${result.summary}`);
+    log(`refresh completed [${reason}] ok=${result.ok} status=${statusCodeLabel} summary=${result.summary}`);
 
     // 高风险弹窗提示逻辑
     if (result.ok && latestVm && latestVm.usedPercent !== null) {
       if (latestVm.usedPercent >= 95) {
         if (!hasAlertedHighRisk) {
-          void vscode.window.showWarningMessage(`MiniMax 风险提示: 当前窗口剩余仅 ${100 - latestVm.usedPercent}%，即将耗尽！建议降低请求频率或切换模型。`);
+          void vscode.window.showWarningMessage(
+            `${strings.warnRiskLowQuota}${100 - latestVm.usedPercent}${strings.warnRiskLowQuotaSuffix}`,
+          );
           hasAlertedHighRisk = true;
         }
       } else {
@@ -408,16 +560,16 @@ async function refreshUsage(reason: "startup" | "auto" | "manual"): Promise<void
     }
 
     if (!result.ok && reason === "manual") {
-      void vscode.window.showErrorMessage(`MiniMax 查询失败：${result.summary}`);
+      void vscode.window.showErrorMessage(`${strings.errorQueryFailedPrefix}${result.summary}`);
     }
   } catch (error) {
-    const message = error instanceof Error ? error.message : "未知错误";
+    const message = error instanceof Error ? error.message : strings.errorUnknown;
     latestVm = buildErrorViewModel(message);
     latestRawResponse = null;
     lastUpdatedAt = new Date();
-    log(`刷新异常 [${reason}] ${message}`);
+    log(`refresh exception [${reason}] ${message}`);
     if (reason === "manual") {
-      void vscode.window.showErrorMessage(`MiniMax 查询异常：${message}`);
+      void vscode.window.showErrorMessage(`${strings.errorQueryExceptionPrefix}${message}`);
     }
   } finally {
     isRefreshing = false;
@@ -427,6 +579,7 @@ async function refreshUsage(reason: "startup" | "auto" | "manual"): Promise<void
 
 function updateStatusBar(): void {
   const config = readConfig();
+  const strings = getRuntimeStrings(config);
   const alignment =
     config.statusBarAlignment === "right"
       ? vscode.StatusBarAlignment.Right
@@ -439,7 +592,7 @@ function updateStatusBar(): void {
       specs,
       alignment,
       basePriority,
-      "$(sync~spin) MiniMax 查询中...",
+      strings.statusQuerying,
       buildRefreshingTooltip(),
       "minimaxUsage.showDetails",
     );
@@ -453,7 +606,7 @@ function updateStatusBar(): void {
       specs,
       alignment,
       basePriority,
-      "$(key) MiniMax: 设置 API Key",
+      strings.statusSetApiKey,
       buildMissingKeyTooltip(),
       "minimaxUsage.setApiKey",
       new vscode.ThemeColor("statusBarItem.warningForeground"),
@@ -468,7 +621,7 @@ function updateStatusBar(): void {
       specs,
       alignment,
       basePriority,
-      "$(sync) MiniMax: 等待刷新",
+      strings.statusWaitingRefresh,
       buildWaitingTooltip(),
       "minimaxUsage.refresh",
       new vscode.ThemeColor("statusBarItem.prominentForeground"),
@@ -547,7 +700,7 @@ function updateStatusBar(): void {
 
   // 4. 每周配额 (可选)
   if (config.showWeeklyInStatusBar && latestVm.weeklyUsedPercent !== null) {
-    addStatusItem(specs, alignment, currentPriority, "  每周: ", tooltip, command, "#888888");
+    addStatusItem(specs, alignment, currentPriority, strings.statusWeekly, tooltip, command, "#888888");
     currentPriority += priorityStep;
 
     addStatusItem(
@@ -597,26 +750,29 @@ function getPercentColor(percent: number | null): string {
 }
 
 function buildRefreshingTooltip(): vscode.MarkdownString {
+  const strings = getRuntimeStrings();
   const md = new vscode.MarkdownString();
-  md.appendMarkdown("**MiniMax Token Plan**\n\n$(sync~spin) 正在刷新数据...");
+  md.appendMarkdown(`**${strings.tooltipTitle}**\n\n${strings.tooltipRefreshing}`);
   return md;
 }
 
 function buildWaitingTooltip(): vscode.MarkdownString {
+  const strings = getRuntimeStrings();
   const md = new vscode.MarkdownString();
   md.isTrusted = true;
   md.supportThemeIcons = true;
-  md.appendMarkdown("**MiniMax Token Plan**\n\n等待首次刷新。  \n");
-  md.appendMarkdown("[$(refresh) 立即刷新](command:minimaxUsage.refresh)");
+  md.appendMarkdown(`**${strings.tooltipTitle}**\n\n${strings.tooltipWaiting}`);
+  md.appendMarkdown(`[$(refresh) ${strings.actionRefreshNow}](command:minimaxUsage.refresh)`);
   return md;
 }
 
 function buildMissingKeyTooltip(): vscode.MarkdownString {
+  const strings = getRuntimeStrings();
   const md = new vscode.MarkdownString();
   md.isTrusted = true;
   md.supportThemeIcons = true;
-  md.appendMarkdown("**MiniMax Token Plan**\n\n未配置 API Key。  \n");
-  md.appendMarkdown("[$(key) 设置 API Key](command:minimaxUsage.setApiKey)");
+  md.appendMarkdown(`**${strings.tooltipTitle}**\n\n${strings.tooltipMissingKey}`);
+  md.appendMarkdown(`[$(key) ${strings.actionSetApiKey}](command:minimaxUsage.setApiKey)`);
   return md;
 }
 
@@ -629,10 +785,10 @@ function showDetailsPanel(): void {
 
   detailsPanel = vscode.window.createWebviewPanel(
     "minimaxUsage.details",
-    "MiniMax 用量详情",
+    getRuntimeStrings().detailsPanelTitle,
     vscode.ViewColumn.Active,
     {
-      enableScripts: false,
+      enableScripts: true,
       enableCommandUris: true,
       retainContextWhenHidden: true,
     },
@@ -642,7 +798,35 @@ function showDetailsPanel(): void {
     detailsPanel = undefined;
   });
 
+  detailsPanel.webview.onDidReceiveMessage(
+    async (message) => {
+      switch (message.command) {
+        case "setLanguage":
+          await setLanguage(message.language);
+          break;
+        case "toggleLanguage":
+          await toggleLanguage();
+          break;
+      }
+    },
+    undefined,
+    contextRef?.subscriptions,
+  );
+
   updateDetailsPanel();
+}
+
+async function setLanguage(language: string): Promise<void> {
+  const config = vscode.workspace.getConfiguration("minimaxUsage");
+  if (language === "zh-CN" || language === "en") {
+    await config.update("language", language, true);
+  }
+}
+
+async function toggleLanguage(): Promise<void> {
+  const config = readConfig();
+  const newLang = config.language === "en" ? "zh-CN" : "en";
+  await setLanguage(newLang);
 }
 
 function updateDetailsPanel(): void {
@@ -650,51 +834,65 @@ function updateDetailsPanel(): void {
     return;
   }
 
+  detailsPanel.title = getRuntimeStrings().detailsPanelTitle;
   detailsPanel.webview.html = renderDetailsPanelHtml();
 }
 
 function renderDetailsPanelHtml(): string {
-  const lang = vscode.env.language;
-  const isEn = lang && lang.startsWith("en");
+  const config = readConfig();
+  const strings = getRuntimeStrings(config);
 
   const i18n = {
-    unconfiguredKey: isEn ? "Unconfigured API Key" : "未配置加密密钥",
-    unconfiguredDesc: isEn 
-      ? "System core features require MiniMax API Key authorization. Please enter your access key in the console to sync data."
-      : "系统核心功能需要 MiniMax API Key 授权。请在控制台中输入您的访问密钥以同步数据。",
-    initAccess: isEn ? "INITIALIZE ACCESS" : "配置密钥",
-    waitingData: isEn ? "Waiting for Data Link" : "等待数据链路",
-    waitingDesc: isEn
-      ? "Attempting to connect to MiniMax servers and sync the latest Token consumption metrics. Please ensure network connectivity."
-      : "正在尝试连接 MiniMax 服务器并同步最新的 Token 消耗指标。请保持网络畅通。",
-    retrySync: isEn ? "RETRY SYNC" : "重试同步",
-    dataBroken: isEn ? "Data Link Broken" : "数据链路中断",
-    reconnect: isEn ? "RECONNECT" : "重新连接",
-    editKey: isEn ? "EDIT KEY" : "修改密钥",
-    panelTitle: isEn ? "MINIMAX USAGE PANEL" : "MINIMAX 用量监控",
-    model: isEn ? "MODEL" : "当前模型",
-    window: isEn ? "WINDOW" : "时间窗口",
-    unknown: isEn ? "UNKNOWN" : "未知",
+    labelSeparator: strings.labelSeparator,
+    unconfiguredKey: strings.panelUnconfiguredKey,
+    unconfiguredDesc: strings.panelUnconfiguredDesc,
+    initAccess: strings.panelInitAccess,
+    waitingData: strings.panelWaitingData,
+    waitingDesc: strings.panelWaitingDesc,
+    retrySync: strings.panelRetrySync,
+    dataBroken: strings.panelDataBroken,
+    reconnect: strings.panelReconnect,
+    editKey: strings.panelEditKey,
+    panelTitle: strings.panelTitle,
+    model: strings.panelModel,
+    window: strings.panelWindow,
+    unknown: strings.unknown,
     na: "N/A",
-    currentInterval: isEn ? "CURRENT INTERVAL" : "当前周期",
-    consumed: isEn ? "CONSUMED" : "已使用",
-    available: isEn ? "AVAILABLE" : "剩余量",
-    limit: isEn ? "LIMIT" : "总配额",
-    resourceUtil: isEn ? "RESOURCE UTILIZATION" : "资源使用率",
-    weeklyAggregate: isEn ? "WEEKLY AGGREGATE" : "本周累计",
-    used: isEn ? "USED" : "已使用",
-    left: isEn ? "LEFT" : "剩余量",
-    total: isEn ? "TOTAL" : "总额度",
-    weeklyQuota: isEn ? "WEEKLY QUOTA" : "本周进度",
-    syncedAt: isEn ? "SYNCED AT: " : "最后同步: ",
-    syncData: isEn ? "SYNC DATA" : "刷新数据",
-    keyConfig: isEn ? "KEY CONFIG" : "配置密钥",
-    reset: isEn ? "RESET" : "清除缓存",
-    riskTitle: isEn ? "Risk Warning" : "风险提示",
-    riskRemaining: isEn ? "Current window remaining only " : "当前窗口剩余仅 ",
-    riskExhausted: isEn ? "Quota is almost exhausted. Suggest lowering request frequency or switching models!" : "额度即将耗尽，建议立即降低请求频率或切换模型！",
-    riskFast: isEn ? "Consuming quickly. Please monitor usage to avoid rate limits." : "消耗较快，请注意使用配额以避免被限流。"
-  };
+    currentInterval: strings.panelCurrentInterval,
+    consumed: strings.panelConsumed,
+    available: strings.panelAvailable,
+    limit: strings.panelLimit,
+    resourceUtil: strings.panelResourceUtil,
+    weeklyAggregate: strings.panelWeeklyAggregate,
+    used: strings.panelUsed,
+    left: strings.panelLeft,
+    total: strings.panelTotal,
+    weeklyQuota: strings.panelWeeklyQuota,
+    modelDetails: strings.panelModelDetails,
+    topItems: strings.panelTopItems,
+    itemsSuffix: strings.panelItemsSuffix,
+    perModelHint: strings.panelPerModelHint,
+    perModelEmpty: strings.panelPerModelEmpty,
+    modelName: strings.panelModelName,
+    modelUsed: strings.panelModelUsed,
+    modelRemaining: strings.panelModelRemaining,
+    modelTotal: strings.panelModelTotal,
+    modelWindow: strings.panelModelWindow,
+    updatedAt: strings.panelUpdatedAt,
+    syncedAt: strings.panelSyncedAt,
+    syncData: strings.panelSyncData,
+    keyConfig: strings.panelKeyConfig,
+    reset: strings.panelReset,
+    riskTitle: strings.panelRiskTitle,
+    riskRemaining: strings.panelRiskRemaining,
+    riskExhausted: strings.panelRiskExhausted,
+  riskFast: strings.panelRiskFast,
+  language: strings.languageSwitchLabel,
+  languageZhCN: strings.languageZhCN,
+  languageEn: strings.languageEn,
+  languageSwitchLabel: strings.languageSwitchLabel,
+  currentLanguage: config.language === "auto" ? (vscode.env.language.toLowerCase().startsWith("zh") ? "zh-CN" : "en") : config.language,
+};
 
   if (!hasApiKey) {
     return renderDetailsHtmlSkeleton(`
@@ -753,6 +951,7 @@ function renderDetailsPanelHtml(): string {
   const weeklyStatus = weeklyUsedPercent >= 90 ? "critical" : weeklyUsedPercent >= 70 ? "warning" : "normal";
   
   const updatedAt = lastUpdatedAt ? formatDateTime(lastUpdatedAt.getTime()) : i18n.na;
+  const modelDetailHtml = renderModelDetailsSection(latestVm, config, i18n, updatedAt);
 
   return renderDetailsHtmlSkeleton(`
     <div class="dashboard">
@@ -761,17 +960,25 @@ function renderDetailsPanelHtml(): string {
           <div class="logo-pulse"></div>
           <h1 class="glow-text">${i18n.panelTitle}</h1>
         </div>
-        <div class="header-info">
-          <div class="info-tag">
-            <span class="tag-label">${i18n.model}</span>
-            <span class="tag-value">${escapeHtml(latestVm.primaryModelName || i18n.unknown)}</span>
-          </div>
-          <div class="info-tag">
-            <span class="tag-label">${i18n.window}</span>
-            <span class="tag-value">${escapeHtml(latestVm.intervalLabel || i18n.na)}</span>
-          </div>
-        </div>
-      </header>
+  <div class="header-info">
+  <div class="info-tag">
+  <span class="tag-label">${i18n.model}</span>
+  <span class="tag-value">${escapeHtml(latestVm.primaryModelName || i18n.unknown)}</span>
+  </div>
+  <div class="info-tag">
+  <span class="tag-label">${i18n.window}</span>
+  <span class="tag-value">${escapeHtml(latestVm.intervalLabel || i18n.na)}</span>
+  </div>
+            <div class="language-switcher">
+              <button id="langToggleBtn" class="lang-toggle" type="button" title="${i18n.languageSwitchLabel}">
+                <span class="lang-icon">🌐</span>
+                <span class="lang-option ${i18n.currentLanguage === "zh-CN" ? "active" : ""}">中</span>
+                <span class="lang-divider">/</span>
+                <span class="lang-option ${i18n.currentLanguage === "en" ? "active" : ""}">En</span>
+              </button>
+            </div>
+  </div>
+  </header>
 
       <div class="stats-container">
         <!-- Current Window Card -->
@@ -889,16 +1096,20 @@ function renderDetailsPanelHtml(): string {
           </a>
         </div>
       </footer>
+
+      ${modelDetailHtml}
     </div>
   `);
 }
 
 function renderDetailsHtmlSkeleton(innerHtml: string): string {
+  const nonce = getNonce();
+  const strings = getRuntimeStrings();
   return `<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="${strings.webviewLang}">
 <head>
   <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'none'; font-src 'none'; img-src 'none';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; font-src 'none'; img-src 'none';">
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <style>
     :root {
@@ -1031,7 +1242,6 @@ function renderDetailsHtmlSkeleton(innerHtml: string): string {
     .cyber-card:hover {
       border-color: rgba(255, 255, 255, 0.3);
       background: rgba(255, 255, 255, 0.05);
-      transform: translateY(-5px);
     }
 
     .card-glow {
@@ -1296,6 +1506,193 @@ function renderDetailsHtmlSkeleton(innerHtml: string): string {
       border-color: var(--danger);
     }
 
+    /* Model Details */
+    .model-details-card {
+      margin-top: 24px;
+      padding: 0;
+      overflow: hidden;
+      transition: border-color 0.2s ease, background-color 0.2s ease;
+    }
+
+    .model-details-card:hover {
+      transform: none;
+      background: var(--panel-bg);
+      border-color: rgba(255, 255, 255, 0.18);
+    }
+
+    .model-details {
+      position: relative;
+      z-index: 1;
+    }
+
+    .model-details[open] .model-details-summary {
+      background: rgba(255, 255, 255, 0.04);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .model-details-summary {
+      list-style: none;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 24px 30px;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .model-details-summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .model-details-summary:hover {
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .model-details-summary-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .model-details-icon {
+      font-size: 18px;
+      filter: drop-shadow(0 0 8px rgba(0, 212, 255, 0.35));
+    }
+
+    .model-details-title {
+      color: var(--text-bright);
+      font-size: 14px;
+      font-weight: 800;
+      letter-spacing: 1px;
+    }
+
+    .model-details-summary-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+
+    .model-details-badge {
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(0, 212, 255, 0.28);
+      background: rgba(0, 212, 255, 0.12);
+      color: var(--primary);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.8px;
+    }
+
+    .model-details-hint {
+      color: var(--text-dim);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.4px;
+      text-align: right;
+    }
+
+    .model-details-chevron {
+      width: 10px;
+      height: 10px;
+      border-right: 2px solid var(--primary);
+      border-bottom: 2px solid var(--primary);
+      transform: rotate(45deg);
+      transition: transform 0.2s ease;
+      margin-top: -3px;
+    }
+
+    .model-details[open] .model-details-chevron {
+      transform: rotate(225deg);
+      margin-top: 3px;
+    }
+
+    .model-details-body {
+      padding: 0 30px 26px;
+    }
+
+    .model-details-scroll {
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .model-details-table {
+      width: 100%;
+      min-width: 720px;
+      border-collapse: collapse;
+    }
+
+    .model-details-table thead th {
+      padding: 14px 16px;
+      text-align: left;
+      color: var(--primary);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.8px;
+      background: rgba(0, 0, 0, 0.16);
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+
+    .model-details-table tbody td {
+      padding: 14px 16px;
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+      color: var(--text-dim);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    .model-details-table tbody tr:first-child td {
+      border-top: none;
+    }
+
+    .model-details-table tbody tr:hover td {
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .model-details-table td.model-cell {
+      color: var(--text-bright);
+      font-weight: 700;
+      max-width: 240px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .model-details-table td.metric-cell,
+    .model-details-table td.window-cell {
+      font-family: 'SF Mono', monospace;
+    }
+
+    .model-details-table td.metric-cell.used {
+      color: var(--primary);
+    }
+
+    .model-details-table td.metric-cell.remaining {
+      color: var(--success);
+    }
+
+    .model-details-table td.metric-cell.total {
+      color: var(--text-bright);
+    }
+
+    .model-details-empty {
+      padding: 18px 20px;
+      color: var(--text-dim);
+      font-size: 13px;
+    }
+
+    .model-details-updated {
+      margin-top: 14px;
+      color: var(--text-dim);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.4px;
+    }
+
     /* Empty State Styles */
     .empty-state {
       max-width: 500px;
@@ -1351,11 +1748,103 @@ function renderDetailsHtmlSkeleton(innerHtml: string): string {
       box-shadow: 0 0 20px rgba(255, 46, 99, 0.4);
     }
     
-    .center { justify-content: center; }
-  </style>
+  .center { justify-content: center; }
+
+  .language-switcher {
+    display: flex;
+    align-items: center;
+    margin-left: 16px;
+    padding-left: 16px;
+    border-left: 1px solid var(--border);
+  }
+
+.lang-toggle {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      user-select: none;
+      padding: 6px 12px;
+      border-radius: 8px;
+      transition: background-color 0.2s ease, border-color 0.2s ease;
+      background: rgba(0, 0, 0, 0.3);
+      border: 1px solid var(--border);
+      color: inherit;
+      font-family: inherit;
+    }
+
+  .lang-toggle:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(0, 212, 255, 0.4);
+  }
+
+.lang-toggle:active {
+      background: rgba(0, 212, 255, 0.15);
+    }
+
+  .lang-icon {
+    font-size: 13px;
+    opacity: 0.8;
+  }
+
+.lang-option {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-dim);
+      transition: color 0.2s ease, text-shadow 0.2s ease;
+      padding: 2px 4px;
+      border-radius: 4px;
+    }
+
+  .lang-option.active {
+    color: var(--primary);
+    text-shadow: 0 0 8px rgba(0, 212, 255, 0.6);
+  }
+
+  .lang-divider {
+    color: var(--text-dim);
+    opacity: 0.3;
+    font-size: 10px;
+  }
+</style>
 </head>
 <body>
-  ${innerHtml}
+${innerHtml}
+<script nonce="${nonce}">
+(() => {
+  const vscode = acquireVsCodeApi();
+  const persistedState = vscode.getState() || {};
+  const persistTargets = document.querySelectorAll("[data-persist-key]");
+
+  for (const target of persistTargets) {
+    const element = target;
+    const key = element.getAttribute("data-persist-key");
+    if (!key) {
+      continue;
+    }
+
+    if (typeof persistedState[key] === "boolean") {
+      element.open = persistedState[key];
+    }
+
+    element.addEventListener("toggle", () => {
+      const nextState = Object.assign({}, vscode.getState() || {}, {
+        [key]: element.open,
+      });
+      vscode.setState(nextState);
+    });
+  }
+
+        const langToggleBtn = document.getElementById("langToggleBtn");
+        if (langToggleBtn) {
+          langToggleBtn.addEventListener("click", function() {
+            vscode.postMessage({
+              command: "toggleLanguage"
+            });
+          });
+        }
+})();
+</script>
 </body>
 </html>`;
 }
@@ -1368,47 +1857,138 @@ function clampPercent(value: number | null): number {
   return Math.min(100, Math.max(0, Math.round(value)));
 }
 
+function renderModelDetailsSection(
+  vm: UsageViewModel,
+  config: ExtensionConfig,
+  i18n: {
+    labelSeparator: string;
+    modelDetails: string;
+    topItems: string;
+    itemsSuffix: string;
+    perModelHint: string;
+    perModelEmpty: string;
+    modelName: string;
+    modelUsed: string;
+    modelRemaining: string;
+    modelTotal: string;
+    modelWindow: string;
+    updatedAt: string;
+  },
+  updatedAt: string,
+): string {
+  const modelLimit = Math.min(config.detailModelLimit, vm.models.length);
+
+  const rows =
+    modelLimit > 0
+      ? vm.models
+          .slice(0, modelLimit)
+          .map(
+            (model) => `
+              <tr>
+                <td class="model-cell" title="${escapeHtml(model.name)}">${escapeHtml(model.name)}</td>
+                <td class="metric-cell used">${formatNumber(model.usedCount)}</td>
+                <td class="metric-cell remaining">${formatNumber(model.remainingCount)}</td>
+                <td class="metric-cell total">${formatNumber(model.totalCount)}</td>
+                <td class="window-cell">${escapeHtml(model.timeWindow || "00:00 ~ 00:00")}</td>
+              </tr>`,
+          )
+          .join("")
+      : "";
+
+  const body =
+    modelLimit > 0
+      ? `
+        <div class="model-details-scroll">
+          <table class="model-details-table">
+            <thead>
+              <tr>
+                <th>${i18n.modelName}</th>
+                <th>${i18n.modelUsed}</th>
+                <th>${i18n.modelRemaining}</th>
+                <th>${i18n.modelTotal}</th>
+                <th>${i18n.modelWindow}</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>`
+      : `<div class="model-details-empty">${i18n.perModelEmpty}</div>`;
+
+  return `
+    <section class="cyber-card model-details-card">
+      <div class="card-glow"></div>
+      <details class="model-details" data-persist-key="modelDetailsOpen">
+        <summary class="model-details-summary">
+          <div class="model-details-summary-left">
+            <span class="model-details-icon">🧩</span>
+            <div>
+              <div class="model-details-title">${i18n.modelDetails}</div>
+            </div>
+          </div>
+          <div class="model-details-summary-right">
+            <span class="model-details-badge">${i18n.topItems} ${modelLimit} ${i18n.itemsSuffix}</span>
+            <span class="model-details-hint">${i18n.perModelHint}</span>
+            <span class="model-details-chevron" aria-hidden="true"></span>
+          </div>
+        </summary>
+        <div class="model-details-body">
+          ${body}
+          <div class="model-details-updated">${i18n.updatedAt}${i18n.labelSeparator}${escapeHtml(updatedAt)}</div>
+        </div>
+      </details>
+    </section>`;
+}
+
 function buildDetailsTooltip(vm: UsageViewModel, config: ExtensionConfig): vscode.MarkdownString {
+  const strings = getRuntimeStrings(config);
   const md = new vscode.MarkdownString();
   md.isTrusted = true;
   md.supportThemeIcons = true;
 
-  md.appendMarkdown("**MiniMax Token Plan 详细信息**\n\n");
-  md.appendMarkdown(`状态：${vm.ok ? "✅" : "❌"} ${escapeMarkdown(vm.statusLabel)}  \n`);
+  md.appendMarkdown(`**${strings.detailTooltipHeading}**\n\n`);
+  md.appendMarkdown(
+    `${strings.detailStatus}${strings.labelSeparator}${vm.ok ? "✅" : "❌"} ${escapeMarkdown(vm.statusLabel)}  \n`,
+  );
 
   if (vm.primaryModelName) {
-    md.appendMarkdown(`主模型：${escapeMarkdown(vm.primaryModelName)}  \n`);
+    md.appendMarkdown(
+      `${strings.detailPrimaryModel}${strings.labelSeparator}${escapeMarkdown(vm.primaryModelName)}  \n`,
+    );
   }
 
   if (vm.timeWindow) {
-    md.appendMarkdown(`时间窗口：${escapeMarkdown(vm.timeWindow)}  \n`);
+    md.appendMarkdown(`${strings.detailTimeWindow}${strings.labelSeparator}${escapeMarkdown(vm.timeWindow)}  \n`);
   }
 
   if (vm.resetTimestamp) {
-    md.appendMarkdown(`窗口重置倒计时：${formatCountdown(vm.resetTimestamp)}  \n`);
+    md.appendMarkdown(
+      `${strings.detailResetCountdown}${strings.labelSeparator}${formatCountdown(vm.resetTimestamp)}  \n`,
+    );
   }
 
-  md.appendMarkdown("\n| 指标 | 数值 |\n| --- | --- |\n");
-  md.appendMarkdown(`| 已使用 | ${formatNumber(vm.usedCount)} |\n`);
-  md.appendMarkdown(`| 剩余 | ${formatNumber(vm.remainingCount)} |\n`);
-  md.appendMarkdown(`| 总额度 | ${formatNumber(vm.totalCount)} |\n`);
-  md.appendMarkdown(`| 窗口进度 | ${vm.usedPercent === null ? "-" : `${vm.usedPercent}%`} |\n`);
+  md.appendMarkdown(`\n| ${strings.detailMetric} | ${strings.detailValue} |\n| --- | --- |\n`);
+  md.appendMarkdown(`| ${strings.detailUsed} | ${formatNumber(vm.usedCount)} |\n`);
+  md.appendMarkdown(`| ${strings.detailRemaining} | ${formatNumber(vm.remainingCount)} |\n`);
+  md.appendMarkdown(`| ${strings.detailTotal} | ${formatNumber(vm.totalCount)} |\n`);
+  md.appendMarkdown(`| ${strings.detailWindowProgress} | ${vm.usedPercent === null ? "-" : `${vm.usedPercent}%`} |\n`);
 
   if (vm.weeklyTotalCount !== null) {
-    md.appendMarkdown(`| 本周已使用 | ${formatNumber(vm.weeklyUsedCount)} |\n`);
-    md.appendMarkdown(`| 本周剩余 | ${formatNumber(vm.weeklyRemainingCount)} |\n`);
-    md.appendMarkdown(`| 本周总额度 | ${formatNumber(vm.weeklyTotalCount)} |\n`);
-    md.appendMarkdown(`| 本周进度 | ${vm.weeklyUsedPercent === null ? "-" : `${vm.weeklyUsedPercent}%`} |\n`);
+    md.appendMarkdown(`| ${strings.detailWeeklyUsed} | ${formatNumber(vm.weeklyUsedCount)} |\n`);
+    md.appendMarkdown(`| ${strings.detailWeeklyRemaining} | ${formatNumber(vm.weeklyRemainingCount)} |\n`);
+    md.appendMarkdown(`| ${strings.detailWeeklyTotal} | ${formatNumber(vm.weeklyTotalCount)} |\n`);
+    md.appendMarkdown(`| ${strings.detailWeeklyProgress} | ${vm.weeklyUsedPercent === null ? "-" : `${vm.weeklyUsedPercent}%`} |\n`);
 
     if (vm.weeklyResetTimestamp) {
-      md.appendMarkdown(`| 本周重置倒计时 | ${formatCountdown(vm.weeklyResetTimestamp)} |\n`);
+      md.appendMarkdown(`| ${strings.detailWeeklyResetCountdown} | ${formatCountdown(vm.weeklyResetTimestamp)} |\n`);
     }
   }
 
   if (vm.models.length > 0) {
     const modelLimit = Math.min(config.detailModelLimit, vm.models.length);
-    md.appendMarkdown(`\n**模型明细（前 ${modelLimit} 项）**\n\n`);
-    md.appendMarkdown("| 模型 | 已使用 | 剩余 | 总额度 | 时间窗口 |\n| --- | --- | --- | --- | --- |\n");
+    md.appendMarkdown(`\n**${strings.detailModelListTitle(modelLimit)}**\n\n`);
+    md.appendMarkdown(
+      `| ${strings.panelModelName} | ${strings.detailUsed} | ${strings.detailRemaining} | ${strings.detailTotal} | ${strings.detailTimeWindow} |\n| --- | --- | --- | --- | --- |\n`,
+    );
 
     for (const model of vm.models.slice(0, modelLimit)) {
       md.appendMarkdown(
@@ -1418,32 +1998,35 @@ function buildDetailsTooltip(vm: UsageViewModel, config: ExtensionConfig): vscod
   }
 
   if (lastUpdatedAt) {
-    md.appendMarkdown(`\n更新时间：${escapeMarkdown(formatDateTime(lastUpdatedAt.getTime()))}  \n`);
+    md.appendMarkdown(
+      `\n${strings.detailUpdatedAt}${strings.labelSeparator}${escapeMarkdown(formatDateTime(lastUpdatedAt.getTime()))}  \n`,
+    );
   }
 
   md.appendMarkdown("\n");
-  md.appendMarkdown("[$(refresh) 刷新](command:minimaxUsage.refresh)");
+  md.appendMarkdown(`[$(refresh) ${strings.actionRefresh}](command:minimaxUsage.refresh)`);
   md.appendMarkdown(" · ");
-  md.appendMarkdown("[$(key) 设置 Key](command:minimaxUsage.setApiKey)");
+  md.appendMarkdown(`[$(key) ${strings.actionSetKey}](command:minimaxUsage.setApiKey)`);
   md.appendMarkdown(" · ");
-  md.appendMarkdown("[$(trash) 清除 Key](command:minimaxUsage.clearApiKey)");
+  md.appendMarkdown(`[$(trash) ${strings.actionClearKey}](command:minimaxUsage.clearApiKey)`);
   md.appendMarkdown(" · ");
-  md.appendMarkdown("[$(copy) 复制原始响应](command:minimaxUsage.copyRawResponse)");
+  md.appendMarkdown(`[$(copy) ${strings.actionCopyRaw}](command:minimaxUsage.copyRawResponse)`);
 
   return md;
 }
 
 function validateApiKey(apiKey: string): { ok: boolean; message: string } {
+  const strings = getRuntimeStrings();
   if (!apiKey) {
-    return { ok: false, message: "缺少 API Key" };
+    return { ok: false, message: strings.validationMissingKey };
   }
 
   if (!/^[a-zA-Z0-9_-]+$/.test(apiKey)) {
-    return { ok: false, message: "API Key 格式无效" };
+    return { ok: false, message: strings.validationInvalidKey };
   }
 
   if (apiKey.length < 10) {
-    return { ok: false, message: "API Key 长度不足" };
+    return { ok: false, message: strings.validationShortKey };
   }
 
   return { ok: true, message: "" };
@@ -1452,6 +2035,7 @@ function validateApiKey(apiKey: string): { ok: boolean; message: string } {
 function readConfig(): ExtensionConfig {
   const config = vscode.workspace.getConfiguration("minimaxUsage");
   const alignmentValue = config.get<string>("statusBarAlignment", "left");
+  const languageValue = config.get<string>("language", "auto");
 
   return {
     refreshIntervalSeconds: Math.max(15, Number(config.get("refreshIntervalSeconds", 60))),
@@ -1459,6 +2043,10 @@ function readConfig(): ExtensionConfig {
     detailModelLimit: clampNumber(Number(config.get("detailModelLimit", 8)), 1, 30),
     statusBarAlignment: alignmentValue === "right" ? "right" : "left",
     requestTimeoutMs: clampNumber(Number(config.get("requestTimeoutMs", 15000)), 3000, 60000),
+    language:
+      languageValue === "zh-CN" || languageValue === "en" || languageValue === "auto"
+        ? languageValue
+        : "auto",
   };
 }
 
@@ -1480,10 +2068,15 @@ function buildErrorViewModel(message: string, raw: unknown = null): UsageViewMod
 }
 
 function buildUsageViewModel(result: RemainsResult): UsageViewModel {
+  const strings = getRuntimeStrings();
   const payload = (result.raw ?? null) as MiniMaxRawPayload | null;
   const models = Array.isArray(payload?.model_remains) ? payload.model_remains : [];
   const primaryModel = models[0];
-  const statusLabel = payload?.base_resp?.status_msg ?? result.summary;
+  const statusLabel =
+    result.summary ||
+    payload?.status_msg ||
+    payload?.base_resp?.status_msg ||
+    strings.fetchSummaryUnknownResponse;
 
   if (!primaryModel) {
     return result.ok
@@ -1511,7 +2104,7 @@ function buildUsageViewModel(result: RemainsResult): UsageViewModel {
       const modelTotalCount = model.current_interval_total_count ?? 0;
       const modelRemainingCount = model.current_interval_usage_count ?? 0;
       return {
-        name: model.model_name ?? "Unknown Model",
+        name: model.model_name ?? strings.unknownModel,
         timeWindow:
           typeof model.start_time === "number" && typeof model.end_time === "number"
             ? `${formatTime(model.start_time)} ~ ${formatTime(model.end_time)}`
@@ -1528,7 +2121,7 @@ function buildUsageViewModel(result: RemainsResult): UsageViewModel {
     raw: result.raw,
     primaryModelName: primaryModel.model_name ?? "",
     timeWindow: hasTimeWindow
-      ? `${formatDateTime(primaryModel.start_time as number)} ~ ${formatTime(primaryModel.end_time as number)} (UTC+8)`
+      ? `${formatDateTime(primaryModel.start_time as number)} ~ ${formatTime(primaryModel.end_time as number)}${strings.timeZoneSuffix}`
       : "",
     resetInLabel:
       typeof primaryModel.remains_time === "number"
@@ -1567,6 +2160,7 @@ function buildUsageViewModel(result: RemainsResult): UsageViewModel {
 }
 
 async function fetchRemains(apiKey: string, timeoutMs: number): Promise<RemainsResult> {
+  const strings = getRuntimeStrings();
   try {
     const { statusCode, body } = await requestJson({
       url: REMAINS_ENDPOINT,
@@ -1578,48 +2172,13 @@ async function fetchRemains(apiKey: string, timeoutMs: number): Promise<RemainsR
     });
 
     const payload = body as MiniMaxRawPayload;
-    const businessStatusCode = payload.status_code ?? payload.base_resp?.status_code ?? null;
-    const businessStatusMessage = payload.status_msg ?? payload.base_resp?.status_msg ?? "";
-
-    if (businessStatusCode === 0) {
-      return {
-        ok: true,
-        statusCode: businessStatusCode,
-        summary: "查询成功",
-        raw: payload,
-      };
-    }
-
-    if (businessStatusCode === 1004) {
-      return {
-        ok: false,
-        statusCode: businessStatusCode,
-        summary: "请检查 API Key 是否正确",
-        raw: payload,
-      };
-    }
-
-    if (statusCode >= 400 && !businessStatusMessage) {
-      return {
-        ok: false,
-        statusCode,
-        summary: `HTTP ${statusCode}`,
-        raw: payload,
-      };
-    }
-
-    return {
-      ok: false,
-      statusCode: businessStatusCode ?? statusCode,
-      summary: businessStatusMessage || "MiniMax 返回了未识别响应",
-      raw: payload,
-    };
+    return summarizeRemainsPayload(payload, statusCode);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "请求 MiniMax 失败";
+    const message = error instanceof Error ? error.message : strings.fetchSummaryRequestFailed;
     return {
       ok: false,
       statusCode: null,
-      summary: /timeout/i.test(message) ? "请求超时，请重试" : message,
+      summary: /timeout/i.test(message) ? strings.fetchSummaryTimeout : message,
       raw: null,
     };
   }
@@ -1656,7 +2215,7 @@ function requestJson(options: {
           try {
             resolve({ statusCode, body: JSON.parse(bodyText) });
           } catch {
-            reject(new Error(`MiniMax 返回了无效 JSON（HTTP ${statusCode}）`));
+            reject(new Error(getRuntimeStrings().invalidJsonMessage(statusCode)));
           }
         });
       },
@@ -1679,15 +2238,17 @@ function formatNumber(value: number | null | undefined): string {
     return "-";
   }
 
-  return value.toLocaleString("zh-CN");
+  return new Intl.NumberFormat(getRuntimeStrings().localeTag).format(value);
 }
 
 function formatTime(timestamp: number): string {
-  return timeFormatter.format(timestamp);
+  const parts = getDateTimeParts(timestamp);
+  return `${parts.hour}:${parts.minute}`;
 }
 
 function formatDateTime(timestamp: number): string {
-  return dateTimeFormatter.format(timestamp).replace(/\//g, "-");
+  const parts = getDateTimeParts(timestamp);
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
 }
 
 function formatDuration(milliseconds: number): string {
@@ -1704,21 +2265,23 @@ function formatDuration(milliseconds: number): string {
 }
 
 function formatDurationCompact(milliseconds: number): string {
+  const strings = getRuntimeStrings();
   const totalSeconds = Math.max(0, Math.ceil(milliseconds / 1000));
   const days = Math.floor(totalSeconds / (3600 * 24));
   const hours = Math.floor((totalSeconds % (3600 * 24)) / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
 
   if (days > 0) {
-    return `${days}天`;
+    return `${days}${strings.durationDay}`;
   }
   if (hours > 0) {
-    return `${hours}小时`;
+    return `${hours}${strings.durationHour}`;
   }
-  return `${minutes}分钟`;
+  return `${minutes}${strings.durationMinute}`;
 }
 
 function formatCountdownFriendly(targetTimestamp: number): string {
+  const strings = getRuntimeStrings();
   const diff = Math.max(targetTimestamp - Date.now(), 0);
   const totalSeconds = Math.ceil(diff / 1000);
   const days = Math.floor(totalSeconds / (24 * 3600));
@@ -1726,12 +2289,12 @@ function formatCountdownFriendly(targetTimestamp: number): string {
   const minutes = Math.floor((totalSeconds % 3600) / 60);
 
   if (days > 0) {
-    return `${days}d${hours}h`;
+    return `${days}${strings.durationDay}${hours}${strings.durationHour}`;
   }
   if (hours > 0) {
-    return `${hours}h${minutes}m`;
+    return `${hours}${strings.durationHour}${minutes}${strings.durationMinute}`;
   }
-  return `${minutes}m`;
+  return `${minutes}${strings.durationMinute}`;
 }
 
 function formatCountdown(targetTimestamp: number): string {
@@ -1753,6 +2316,92 @@ function escapeHtml(value: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+function isMiniMaxRawPayload(value: unknown): value is MiniMaxRawPayload {
+  return typeof value === "object" && value !== null;
+}
+
+function summarizeRemainsPayload(
+  payload: MiniMaxRawPayload,
+  fallbackStatusCode: number | null = null,
+): RemainsResult {
+  const strings = getRuntimeStrings();
+  const businessStatusCode = payload.status_code ?? payload.base_resp?.status_code ?? null;
+  const businessStatusMessage = payload.status_msg ?? payload.base_resp?.status_msg ?? "";
+
+  if (businessStatusCode === 0) {
+    return {
+      ok: true,
+      statusCode: businessStatusCode,
+      summary: strings.fetchSummarySuccess,
+      raw: payload,
+    };
+  }
+
+  if (businessStatusCode === 1004) {
+    return {
+      ok: false,
+      statusCode: businessStatusCode,
+      summary: strings.fetchSummaryCheckApiKey,
+      raw: payload,
+    };
+  }
+
+  if ((fallbackStatusCode ?? 0) >= 400 && !businessStatusMessage) {
+    return {
+      ok: false,
+      statusCode: fallbackStatusCode,
+      summary: `HTTP ${fallbackStatusCode}`,
+      raw: payload,
+    };
+  }
+
+  return {
+    ok: false,
+    statusCode: businessStatusCode ?? fallbackStatusCode,
+    summary: businessStatusMessage || strings.fetchSummaryUnknownResponse,
+    raw: payload,
+  };
+}
+
+function rebuildUsageViewModelFromRaw(raw: unknown): UsageViewModel | null {
+  if (!isMiniMaxRawPayload(raw)) {
+    return null;
+  }
+
+  return buildUsageViewModel(summarizeRemainsPayload(raw));
+}
+
+function getDateTimeParts(timestamp: number): Record<string, string> {
+  return new Intl.DateTimeFormat(getRuntimeStrings().localeTag, {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  })
+    .formatToParts(new Date(timestamp))
+    .reduce<Record<string, string>>((accumulator, part) => {
+      if (part.type !== "literal") {
+        accumulator[part.type] = part.value;
+      }
+      return accumulator;
+    }, {});
+}
+
+function getNonce(length = 16): string {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  let result = "";
+
+  for (let index = 0; index < length; index += 1) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+
+  return result;
 }
 
 function log(message: string): void {

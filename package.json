@@ -1,7 +1,7 @@
 {
   "name": "minimax-usage-statusbar",
-  "displayName": "MiniMax Usage StatusBar",
-  "description": "Query MiniMax Token Plan usage and show detailed stats in VS Code status bar.",
+  "displayName": "%extension.displayName%",
+  "description": "%extension.description%",
   "icon": "images/icon.png",
   "version": "0.0.7",
   "publisher": "decard",
@@ -30,46 +30,46 @@
     "commands": [
       {
         "command": "minimaxUsage.refresh",
-        "title": "MiniMax Usage: Refresh"
+        "title": "%command.refresh.title%"
       },
       {
         "command": "minimaxUsage.showDetails",
-        "title": "MiniMax Usage: Show Details"
+        "title": "%command.showDetails.title%"
       },
       {
         "command": "minimaxUsage.setApiKey",
-        "title": "MiniMax Usage: Set API Key"
+        "title": "%command.setApiKey.title%"
       },
       {
         "command": "minimaxUsage.clearApiKey",
-        "title": "MiniMax Usage: Clear API Key"
+        "title": "%command.clearApiKey.title%"
       },
       {
         "command": "minimaxUsage.copyRawResponse",
-        "title": "MiniMax Usage: Copy Raw Response"
+        "title": "%command.copyRawResponse.title%"
       }
     ],
     "configuration": {
-      "title": "MiniMax Usage",
+      "title": "%configuration.title%",
       "properties": {
         "minimaxUsage.refreshIntervalSeconds": {
           "type": "number",
           "default": 60,
           "minimum": 15,
           "maximum": 3600,
-          "description": "Auto refresh interval (seconds)."
+          "description": "%configuration.refreshIntervalSeconds.description%"
         },
         "minimaxUsage.showWeeklyInStatusBar": {
           "type": "boolean",
           "default": true,
-          "description": "Show weekly usage summary in status bar text."
+          "description": "%configuration.showWeeklyInStatusBar.description%"
         },
         "minimaxUsage.detailModelLimit": {
           "type": "number",
           "default": 8,
           "minimum": 1,
           "maximum": 30,
-          "description": "How many models to display in status bar tooltip details."
+          "description": "%configuration.detailModelLimit.description%"
         },
         "minimaxUsage.statusBarAlignment": {
           "type": "string",
@@ -78,14 +78,29 @@
             "right"
           ],
           "default": "left",
-          "description": "Alignment of MiniMax usage status item."
+          "description": "%configuration.statusBarAlignment.description%"
         },
         "minimaxUsage.requestTimeoutMs": {
           "type": "number",
           "default": 15000,
           "minimum": 3000,
           "maximum": 60000,
-          "description": "HTTP request timeout in milliseconds."
+          "description": "%configuration.requestTimeoutMs.description%"
+        },
+        "minimaxUsage.language": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "zh-CN",
+            "en"
+          ],
+          "default": "auto",
+          "description": "%configuration.language.description%",
+          "enumDescriptions": [
+            "%configuration.language.auto%",
+            "%configuration.language.zhCN%",
+            "%configuration.language.en%"
+          ]
         }
       }
     }

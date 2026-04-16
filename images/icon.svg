@@ -17,8 +17,6 @@
 
   <!-- VS Code 风格圆角底板 -->
   <rect width="256" height="256" rx="52" fill="url(#bg)" />
-  <!-- 轻微边框 -->
-  <rect width="254" height="254" x="1" y="1" rx="51" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="2" />
 
   <!-- 仪表盘轨道 -->
   <path d="M 64 180 A 76 76 0 1 1 192 180" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="16" stroke-linecap="round" />

@@ -1,0 +1,19 @@
+{
+  "extension.displayName": "MiniMax Usage StatusBar",
+  "extension.description": "Query MiniMax Token Plan usage and show detailed stats in the VS Code status bar.",
+  "command.refresh.title": "MiniMax Usage: Refresh",
+  "command.showDetails.title": "MiniMax Usage: Show Details",
+  "command.setApiKey.title": "MiniMax Usage: Set API Key",
+  "command.clearApiKey.title": "MiniMax Usage: Clear API Key",
+  "command.copyRawResponse.title": "MiniMax Usage: Copy Raw Response",
+  "configuration.title": "MiniMax Usage",
+  "configuration.refreshIntervalSeconds.description": "Auto refresh interval in seconds.",
+  "configuration.showWeeklyInStatusBar.description": "Show weekly usage summary in the status bar text.",
+  "configuration.detailModelLimit.description": "How many models to display in the status bar tooltip and details panel.",
+  "configuration.statusBarAlignment.description": "Alignment of the MiniMax usage status items.",
+  "configuration.requestTimeoutMs.description": "HTTP request timeout in milliseconds.",
+  "configuration.language.description": "Language for runtime texts in the extension UI. Static command and setting labels still follow the VS Code display language.",
+  "configuration.language.auto": "Follow the VS Code display language.",
+  "configuration.language.zhCN": "Force Simplified Chinese for runtime texts.",
+  "configuration.language.en": "Force English for runtime texts."
+}

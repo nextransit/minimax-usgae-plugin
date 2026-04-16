@@ -1,5 +1,9 @@
 # 项目 Issues 与解决方案记录
 
+## [已解决] Linux 环境下加载 Webview 时 ServiceWorker 报错 InvalidStateError
+- **问题描述**: 插件在 Linux 系统上的 VS Code 环境打开 Webview 面板时，提示 `Could not register service worker: InvalidStateError: Failed to register a ServiceWorker: The document is in an invalid state`。
+- **解决方案**: 这是由部分 Electron/Chromium 版本底层初始化 Webview iframe 时对内容安全（CSP）与文档生命周期要求较为严苛导致的。解决办法是在生成的 HTML `<head>` 标签内插入强有力的 CSP `<meta>` 标签：`<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'none'; font-src 'none'; img-src 'none';">`，并且在创建面板时明确传入 `enableScripts: false` 禁用不必要的脚本支持，以满足底层的沙盒校验。
+
 ## [已解决] vsce package 打包报错：Couldn't detect the repository
 - **问题描述**: 当 `package.json` 中的 `repository.url` 为私有/内网 Git 地址（例如 `https://192.168.19.70/...`）时，由于 VSCE 无法像解析 GitHub/GitLab 公开项目那样自动推导原始图片链接地址，会在打包包含本地相对路径图片（如 `<img src="./images/icon.png">`）的 `README.md` 时报错阻止打包。
 - **解决方案**: 在 `package.json` 的 `scripts` 中封装命令，通过添加 `--baseContentUrl` 和 `--baseImagesUrl` 手动提供图片在线解析的基础 URL，例如：`vsce package --baseContentUrl https://192.168.19.70/ai/minimax-usgae-plugin/-/raw/master --baseImagesUrl https://192.168.19.70/ai/minimax-usgae-plugin/-/raw/master`。此后使用 `npm run package` 进行打包。
