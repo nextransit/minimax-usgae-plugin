@@ -69,8 +69,24 @@ type ExtensionConfig = {
   requestTimeoutMs: number;
 };
 
+type StatusItemSpec = {
+  alignment: vscode.StatusBarAlignment;
+  priority: number;
+  text: string;
+  tooltip?: vscode.MarkdownString | string;
+  command?: string;
+  color?: string | vscode.ThemeColor;
+  backgroundColor?: vscode.ThemeColor;
+};
+
+type ManagedStatusItem = {
+  item: vscode.StatusBarItem;
+  alignment: vscode.StatusBarAlignment;
+  priority: number;
+};
+
 let contextRef: vscode.ExtensionContext | undefined;
-let statusItems: vscode.StatusBarItem[] = [];
+let statusItems: ManagedStatusItem[] = [];
 let output: vscode.OutputChannel | undefined;
 let refreshTimer: NodeJS.Timeout | undefined;
 let countdownTimer: NodeJS.Timeout | undefined;
@@ -164,8 +180,8 @@ export function deactivate(): void {
   }
 
   if (statusItems.length > 0) {
-    for (const item of statusItems) {
-      item.dispose();
+    for (const entry of statusItems) {
+      entry.item.dispose();
     }
     statusItems = [];
   }
@@ -237,8 +253,8 @@ function registerCommands(context: vscode.ExtensionContext): void {
 }
 
 function clearStatusItems(): void {
-  for (const item of statusItems) {
-    item.dispose();
+  for (const entry of statusItems) {
+    entry.item.dispose();
   }
   statusItems = [];
 }
@@ -249,6 +265,7 @@ function recreateStatusBarItem(): void {
 }
 
 function addStatusItem(
+  specs: StatusItemSpec[],
   alignment: vscode.StatusBarAlignment,
   priority: number,
   text: string,
@@ -256,24 +273,50 @@ function addStatusItem(
   command?: string,
   color?: string | vscode.ThemeColor,
   backgroundColor?: vscode.ThemeColor,
-): vscode.StatusBarItem {
-  const item = vscode.window.createStatusBarItem(alignment, priority);
-  item.text = text;
-  if (tooltip) {
-    item.tooltip = tooltip;
-  }
-  if (command) {
-    item.command = command;
-  }
-  if (color) {
-    item.color = color;
-  }
-  if (backgroundColor) {
-    item.backgroundColor = backgroundColor;
-  }
+): void {
+  specs.push({
+    alignment,
+    priority,
+    text,
+    tooltip,
+    command,
+    color,
+    backgroundColor,
+  });
+}
+
+function applyStatusItemSpec(item: vscode.StatusBarItem, spec: StatusItemSpec): void {
+  item.text = spec.text;
+  item.tooltip = spec.tooltip;
+  item.command = spec.command;
+  item.color = spec.color;
+  item.backgroundColor = spec.backgroundColor;
   item.show();
-  statusItems.push(item);
-  return item;
+}
+
+function renderStatusItems(specs: StatusItemSpec[]): void {
+  for (let index = 0; index < specs.length; index += 1) {
+    const spec = specs[index];
+    const existing = statusItems[index];
+
+    if (!existing || existing.alignment !== spec.alignment || existing.priority !== spec.priority) {
+      existing?.item.dispose();
+
+      statusItems[index] = {
+        item: vscode.window.createStatusBarItem(spec.alignment, spec.priority),
+        alignment: spec.alignment,
+        priority: spec.priority,
+      };
+    }
+
+    applyStatusItemSpec(statusItems[index].item, spec);
+  }
+
+  for (let index = specs.length; index < statusItems.length; index += 1) {
+    statusItems[index].item.dispose();
+  }
+
+  statusItems.length = specs.length;
 }
 
 function restartRefreshTimer(): void {
@@ -383,29 +426,31 @@ async function refreshUsage(reason: "startup" | "auto" | "manual"): Promise<void
 }
 
 function updateStatusBar(): void {
-  clearStatusItems();
-
   const config = readConfig();
   const alignment =
     config.statusBarAlignment === "right"
       ? vscode.StatusBarAlignment.Right
       : vscode.StatusBarAlignment.Left;
   const basePriority = 100;
+  const specs: StatusItemSpec[] = [];
 
-  if (isRefreshing) {
+  if (isRefreshing && !latestVm) {
     addStatusItem(
+      specs,
       alignment,
       basePriority,
       "$(sync~spin) MiniMax 查询中...",
       buildRefreshingTooltip(),
       "minimaxUsage.showDetails",
     );
+    renderStatusItems(specs);
     updateDetailsPanel();
     return;
   }
 
   if (!hasApiKey) {
     addStatusItem(
+      specs,
       alignment,
       basePriority,
       "$(key) MiniMax: 设置 API Key",
@@ -413,12 +458,14 @@ function updateStatusBar(): void {
       "minimaxUsage.setApiKey",
       new vscode.ThemeColor("statusBarItem.warningForeground"),
     );
+    renderStatusItems(specs);
     updateDetailsPanel();
     return;
   }
 
   if (!latestVm) {
     addStatusItem(
+      specs,
       alignment,
       basePriority,
       "$(sync) MiniMax: 等待刷新",
@@ -426,20 +473,23 @@ function updateStatusBar(): void {
       "minimaxUsage.refresh",
       new vscode.ThemeColor("statusBarItem.prominentForeground"),
     );
+    renderStatusItems(specs);
     updateDetailsPanel();
     return;
   }
 
   if (!latestVm.ok) {
     addStatusItem(
+      specs,
       alignment,
       basePriority,
-      `$(warning) MiniMax: ${truncate(latestVm.statusLabel, 40)}`,
+      `${isRefreshing ? "$(sync~spin)" : "$(warning)"} MiniMax: ${truncate(latestVm.statusLabel, 40)}`,
       buildDetailsTooltip(latestVm, config),
       "minimaxUsage.showDetails",
       new vscode.ThemeColor("statusBarItem.warningForeground"),
       new vscode.ThemeColor("statusBarItem.warningBackground"),
     );
+    renderStatusItems(specs);
     updateDetailsPanel();
     return;
   }
@@ -453,9 +503,10 @@ function updateStatusBar(): void {
   // 1. 周期时长
   if (latestVm.intervalLabel) {
     addStatusItem(
+      specs,
       alignment,
       currentPriority,
-      `${latestVm.intervalLabel}: `,
+      `${isRefreshing ? "$(sync~spin) " : ""}${latestVm.intervalLabel}: `,
       tooltip,
       command,
       "#888888",
@@ -465,10 +516,14 @@ function updateStatusBar(): void {
 
   // 2. 当前配额百分比
   const percentText = latestVm.usedPercent === null ? "-" : `${latestVm.usedPercent}%`;
+  const primaryPercentText = !latestVm.intervalLabel && isRefreshing
+    ? `$(sync~spin) ${percentText}`
+    : percentText;
   addStatusItem(
+    specs,
     alignment,
     currentPriority,
-    percentText,
+    primaryPercentText,
     tooltip,
     command,
     getPercentColor(latestVm.usedPercent),
@@ -479,6 +534,7 @@ function updateStatusBar(): void {
   const resetLabel = latestVm.resetTimestamp ? formatCountdownFriendly(latestVm.resetTimestamp) : "";
   if (resetLabel) {
     addStatusItem(
+      specs,
       alignment,
       currentPriority,
       ` $(clock) ${resetLabel}`,
@@ -491,10 +547,11 @@ function updateStatusBar(): void {
 
   // 4. 每周配额 (可选)
   if (config.showWeeklyInStatusBar && latestVm.weeklyUsedPercent !== null) {
-    addStatusItem(alignment, currentPriority, "  每周: ", tooltip, command, "#888888");
+    addStatusItem(specs, alignment, currentPriority, "  每周: ", tooltip, command, "#888888");
     currentPriority += priorityStep;
 
     addStatusItem(
+      specs,
       alignment,
       currentPriority,
       `${latestVm.weeklyUsedPercent}%`,
@@ -509,6 +566,7 @@ function updateStatusBar(): void {
       : "";
     if (weeklyResetLabel) {
       addStatusItem(
+        specs,
         alignment,
         currentPriority,
         ` $(clock) ${weeklyResetLabel}`,
@@ -520,6 +578,7 @@ function updateStatusBar(): void {
     }
   }
 
+  renderStatusItems(specs);
   updateDetailsPanel();
 }
 
