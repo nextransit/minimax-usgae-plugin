@@ -1,5 +1,9 @@
 # MiniMax Usage StatusBar (VS Code)
 
+<p align="center">
+  <img src="./images/icon.png" width="128" />
+</p>
+
 基于 [Eyozy/minimax-usage](https://github.com/Eyozy/minimax-usage) 的 MiniMax Token Plan 用量查询逻辑，封装成 VS Code 插件，并在状态栏展示详细信息。
 
 ## 功能
