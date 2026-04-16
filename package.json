@@ -2,18 +2,23 @@
   "name": "minimax-usage-statusbar",
   "displayName": "MiniMax Usage StatusBar",
   "description": "Query MiniMax Token Plan usage and show detailed stats in VS Code status bar.",
-  "version": "0.0.1",
-  "publisher": "local",
+  "version": "0.0.3",
+  "publisher": "dc",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://192.168.19.70/ai/minimax-usgae-plugin.git"
+  },
   "type": "commonjs",
   "engines": {
-    "vscode": "^1.85.0"
+    "vscode": "^1.107.0"
   },
   "categories": [
     "Other"
   ],
   "activationEvents": [
     "onStartupFinished",
+    "onCommand:minimaxUsage.showDetails",
     "onCommand:minimaxUsage.refresh",
     "onCommand:minimaxUsage.setApiKey",
     "onCommand:minimaxUsage.clearApiKey",
@@ -25,6 +30,10 @@
       {
         "command": "minimaxUsage.refresh",
         "title": "MiniMax Usage: Refresh"
+      },
+      {
+        "command": "minimaxUsage.showDetails",
+        "title": "MiniMax Usage: Show Details"
       },
       {
         "command": "minimaxUsage.setApiKey",
@@ -88,7 +97,7 @@
   },
   "devDependencies": {
     "@types/node": "^25.6.0",
-    "@types/vscode": "^1.116.0",
+    "@types/vscode": "^1.107.0",
     "typescript": "^6.0.2"
   }
 }

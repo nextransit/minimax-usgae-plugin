@@ -78,6 +78,7 @@ let latestRawResponse: unknown = null;
 let lastUpdatedAt: Date | null = null;
 let hasApiKey = false;
 let isRefreshing = false;
+let detailsPanel: vscode.WebviewPanel | undefined;
 
 const dateTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
   timeZone: "Asia/Shanghai",
@@ -163,6 +164,11 @@ export function deactivate(): void {
     statusItem.dispose();
     statusItem = undefined;
   }
+
+  if (detailsPanel) {
+    detailsPanel.dispose();
+    detailsPanel = undefined;
+  }
 }
 
 function registerCommands(context: vscode.ExtensionContext): void {
@@ -207,6 +213,10 @@ function registerCommands(context: vscode.ExtensionContext): void {
 
     vscode.commands.registerCommand("minimaxUsage.refresh", async () => {
       await refreshUsage("manual");
+    }),
+
+    vscode.commands.registerCommand("minimaxUsage.showDetails", async () => {
+      showDetailsPanel();
     }),
 
     vscode.commands.registerCommand("minimaxUsage.copyRawResponse", async () => {
@@ -331,11 +341,13 @@ function updateStatusBar(): void {
   }
 
   const config = readConfig();
+  resetStatusBarColors();
 
   if (isRefreshing) {
     statusItem.text = "$(sync~spin) MiniMax 查询中...";
-    statusItem.command = "minimaxUsage.refresh";
+    statusItem.command = "minimaxUsage.showDetails";
     statusItem.tooltip = buildRefreshingTooltip();
+    updateDetailsPanel();
     return;
   }
 
@@ -343,6 +355,8 @@ function updateStatusBar(): void {
     statusItem.text = "$(key) MiniMax: 设置 API Key";
     statusItem.command = "minimaxUsage.setApiKey";
     statusItem.tooltip = buildMissingKeyTooltip();
+    statusItem.color = new vscode.ThemeColor("statusBarItem.warningForeground");
+    updateDetailsPanel();
     return;
   }
 
@@ -350,14 +364,19 @@ function updateStatusBar(): void {
     statusItem.text = "$(sync) MiniMax: 等待刷新";
     statusItem.command = "minimaxUsage.refresh";
     statusItem.tooltip = buildWaitingTooltip();
+    statusItem.color = new vscode.ThemeColor("statusBarItem.prominentForeground");
+    updateDetailsPanel();
     return;
   }
 
-  statusItem.command = "minimaxUsage.refresh";
+  statusItem.command = "minimaxUsage.showDetails";
 
   if (!latestVm.ok) {
     statusItem.text = `$(warning) MiniMax: ${truncate(latestVm.statusLabel, 40)}`;
     statusItem.tooltip = buildDetailsTooltip(latestVm, config);
+    statusItem.color = new vscode.ThemeColor("statusBarItem.warningForeground");
+    statusItem.backgroundColor = new vscode.ThemeColor("statusBarItem.warningBackground");
+    updateDetailsPanel();
     return;
   }
 
@@ -373,6 +392,43 @@ function updateStatusBar(): void {
 
   statusItem.text = `$(dashboard) MiniMax ${usedText}/${totalText} (${percentText}) · 剩余${remainingText}${weeklyText}`;
   statusItem.tooltip = buildDetailsTooltip(latestVm, config);
+
+  applyUsageToneColors(latestVm.usedPercent);
+  updateDetailsPanel();
+}
+
+function resetStatusBarColors(): void {
+  if (!statusItem) {
+    return;
+  }
+
+  statusItem.color = undefined;
+  statusItem.backgroundColor = undefined;
+}
+
+function applyUsageToneColors(usedPercent: number | null): void {
+  if (!statusItem) {
+    return;
+  }
+
+  if (usedPercent === null) {
+    statusItem.color = new vscode.ThemeColor("statusBarItem.prominentForeground");
+    return;
+  }
+
+  if (usedPercent >= 90) {
+    statusItem.color = new vscode.ThemeColor("statusBarItem.errorForeground");
+    statusItem.backgroundColor = new vscode.ThemeColor("statusBarItem.errorBackground");
+    return;
+  }
+
+  if (usedPercent >= 75) {
+    statusItem.color = new vscode.ThemeColor("statusBarItem.warningForeground");
+    statusItem.backgroundColor = new vscode.ThemeColor("statusBarItem.warningBackground");
+    return;
+  }
+
+  statusItem.color = "#2ea043";
 }
 
 function buildRefreshingTooltip(): vscode.MarkdownString {
@@ -397,6 +453,233 @@ function buildMissingKeyTooltip(): vscode.MarkdownString {
   md.appendMarkdown("**MiniMax Token Plan**\n\n未配置 API Key。  \n");
   md.appendMarkdown("[$(key) 设置 API Key](command:minimaxUsage.setApiKey)");
   return md;
+}
+
+function showDetailsPanel(): void {
+  if (detailsPanel) {
+    detailsPanel.reveal(vscode.ViewColumn.Active);
+    updateDetailsPanel();
+    return;
+  }
+
+  detailsPanel = vscode.window.createWebviewPanel(
+    "minimaxUsage.details",
+    "MiniMax 用量详情",
+    vscode.ViewColumn.Active,
+    {
+      enableCommandUris: true,
+      retainContextWhenHidden: true,
+    },
+  );
+
+  detailsPanel.onDidDispose(() => {
+    detailsPanel = undefined;
+  });
+
+  updateDetailsPanel();
+}
+
+function updateDetailsPanel(): void {
+  if (!detailsPanel) {
+    return;
+  }
+
+  detailsPanel.webview.html = renderDetailsPanelHtml();
+}
+
+function renderDetailsPanelHtml(): string {
+  const actions = `
+    <div class="actions">
+      <a class="action-btn" href="command:minimaxUsage.refresh">刷新</a>
+      <a class="action-btn" href="command:minimaxUsage.setApiKey">设置 Key</a>
+      <a class="action-btn danger" href="command:minimaxUsage.clearApiKey">清除 Key</a>
+    </div>
+  `;
+
+  if (!hasApiKey) {
+    return renderDetailsHtmlSkeleton(`
+      <h2>未配置 API Key</h2>
+      <p>请先设置 MiniMax API Key，然后再查看详细数据。</p>
+      ${actions}
+    `);
+  }
+
+  if (!latestVm) {
+    return renderDetailsHtmlSkeleton(`
+      <h2>暂无数据</h2>
+      <p>正在等待首次查询结果，请点击刷新。</p>
+      ${actions}
+    `);
+  }
+
+  if (!latestVm.ok) {
+    return renderDetailsHtmlSkeleton(`
+      <h2>查询失败</h2>
+      <p class="error-text">${escapeHtml(latestVm.statusLabel)}</p>
+      ${actions}
+    `);
+  }
+
+  const windowProgress = clampPercent(latestVm.usedPercent);
+  const weeklyProgress = clampPercent(latestVm.weeklyUsedPercent);
+  const weeklyProgressText = latestVm.weeklyUsedPercent === null ? "-" : `${latestVm.weeklyUsedPercent}%`;
+  const updatedAt = lastUpdatedAt ? formatDateTime(lastUpdatedAt.getTime()) : "-";
+
+  return renderDetailsHtmlSkeleton(`
+    <h2>MiniMax Token Plan 三行详情</h2>
+    <p class="meta">主模型：${escapeHtml(latestVm.primaryModelName || "-")} ｜ 时间窗口：${escapeHtml(latestVm.timeWindow || "-")}</p>
+
+    <div class="line-card">
+      <div class="line-title">1) 当前窗口</div>
+      <div class="line-content">
+        <span class="kv used">已使用 ${formatNumber(latestVm.usedCount)}</span>
+        <span class="kv remaining">剩余 ${formatNumber(latestVm.remainingCount)}</span>
+        <span class="kv total">总额度 ${formatNumber(latestVm.totalCount)}</span>
+        <span class="kv reset">窗口重置 ${escapeHtml(latestVm.resetTimestamp ? formatCountdown(latestVm.resetTimestamp) : "-")}</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill current" style="width:${windowProgress}%"></div>
+      </div>
+    </div>
+
+    <div class="line-card">
+      <div class="line-title">2) 本周汇总</div>
+      <div class="line-content">
+        <span class="kv used-week">本周已使用 ${formatNumber(latestVm.weeklyUsedCount)}</span>
+        <span class="kv remaining-week">本周剩余 ${formatNumber(latestVm.weeklyRemainingCount)}</span>
+        <span class="kv total-week">本周总额度 ${formatNumber(latestVm.weeklyTotalCount)}</span>
+        <span class="kv reset-week">本周重置 ${escapeHtml(latestVm.weeklyResetTimestamp ? formatCountdown(latestVm.weeklyResetTimestamp) : "-")}</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill weekly" style="width:${weeklyProgress}%"></div>
+      </div>
+    </div>
+
+    <div class="line-card">
+      <div class="line-title">3) 本周使用进度</div>
+      <div class="line-content">
+        <span class="kv progress-label">本周使用进度 <strong>${escapeHtml(weeklyProgressText)}</strong></span>
+      </div>
+      <div class="progress-track progress-track-large">
+        <div class="progress-fill weekly-strong" style="width:${weeklyProgress}%"></div>
+      </div>
+    </div>
+
+    <p class="meta">更新时间：${escapeHtml(updatedAt)}</p>
+    ${actions}
+  `);
+}
+
+function renderDetailsHtmlSkeleton(innerHtml: string): string {
+  return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    body {
+      margin: 0;
+      padding: 16px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--vscode-editor-foreground);
+      background: var(--vscode-editor-background);
+    }
+    h2 {
+      margin: 0 0 8px;
+      font-size: 16px;
+      line-height: 1.4;
+    }
+    p {
+      margin: 0 0 12px;
+      line-height: 1.5;
+      color: var(--vscode-descriptionForeground);
+    }
+    .meta {
+      font-size: 12px;
+      color: var(--vscode-descriptionForeground);
+    }
+    .line-card {
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 12px;
+      background: color-mix(in srgb, var(--vscode-editor-background) 80%, #000 20%);
+    }
+    .line-title {
+      font-weight: 700;
+      margin-bottom: 8px;
+      color: var(--vscode-editor-foreground);
+    }
+    .line-content {
+      display: grid;
+      gap: 6px;
+      margin-bottom: 8px;
+      font-size: 13px;
+    }
+    .kv { display: inline-block; }
+    .used { color: #ff6b6b; }
+    .remaining { color: #2fbf71; }
+    .total { color: #5aa9ff; }
+    .reset { color: #f5a623; }
+    .used-week { color: #ff8fab; }
+    .remaining-week { color: #59cd90; }
+    .total-week { color: #8e9aaf; }
+    .reset-week { color: #f4a261; }
+    .progress-label { color: #a78bfa; font-size: 14px; }
+    .error-text { color: #ff6b6b; font-weight: 600; }
+    .progress-track {
+      width: 100%;
+      height: 8px;
+      border-radius: 99px;
+      background: color-mix(in srgb, var(--vscode-editor-background) 70%, #222 30%);
+      overflow: hidden;
+    }
+    .progress-track-large { height: 12px; }
+    .progress-fill {
+      height: 100%;
+      transition: width 220ms ease;
+    }
+    .progress-fill.current { background: linear-gradient(90deg, #5aa9ff, #2dd4bf); }
+    .progress-fill.weekly { background: linear-gradient(90deg, #f59e0b, #ef4444); }
+    .progress-fill.weekly-strong { background: linear-gradient(90deg, #a78bfa, #f472b6); }
+    .actions {
+      margin-top: 8px;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .action-btn {
+      display: inline-block;
+      text-decoration: none;
+      font-size: 12px;
+      padding: 4px 10px;
+      border: 1px solid var(--vscode-button-border, transparent);
+      border-radius: 6px;
+      color: var(--vscode-button-foreground);
+      background: var(--vscode-button-background);
+    }
+    .action-btn:hover {
+      background: var(--vscode-button-hoverBackground);
+    }
+    .action-btn.danger {
+      background: #7f1d1d;
+      color: #fff;
+      border-color: #991b1b;
+    }
+  </style>
+</head>
+<body>
+  ${innerHtml}
+</body>
+</html>`;
+}
+
+function clampPercent(value: number | null): number {
+  if (value === null || Number.isNaN(value)) {
+    return 0;
+  }
+
+  return Math.min(100, Math.max(0, Math.round(value)));
 }
 
 function buildDetailsTooltip(vm: UsageViewModel, config: ExtensionConfig): vscode.MarkdownString {
@@ -739,6 +1022,15 @@ function truncate(value: string, maxLength: number): string {
 
 function escapeMarkdown(value: string): string {
   return value.replace(/[\\`*_{}[\]()#+\-.!|]/g, "\\$&");
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function log(message: string): void {

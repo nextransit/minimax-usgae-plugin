@@ -5,9 +5,15 @@
 ## 功能
 
 - 状态栏显示当前窗口用量（已用/总额/百分比）
+- 状态栏按用量阈值自动显示不同颜色（正常/预警/高风险）
 - 可选显示本周用量进度
 - Hover 展示详细信息：状态、时间窗口、重置倒计时、模型明细
+- 点击状态栏弹出三行彩色详情面板（含进度条）：
+  - 已使用/剩余/总额度/窗口重置
+  - 本周已使用/本周剩余/本周总额度/本周重置
+  - 本周使用进度 xxx%
 - 命令支持：
+  - `MiniMax Usage: Show Details`
   - `MiniMax Usage: Set API Key`
   - `MiniMax Usage: Clear API Key`
   - `MiniMax Usage: Refresh`
