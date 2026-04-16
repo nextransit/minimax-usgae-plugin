@@ -1,0 +1,94 @@
+{
+  "name": "minimax-usage-statusbar",
+  "displayName": "MiniMax Usage StatusBar",
+  "description": "Query MiniMax Token Plan usage and show detailed stats in VS Code status bar.",
+  "version": "0.0.1",
+  "publisher": "local",
+  "license": "MIT",
+  "type": "commonjs",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:minimaxUsage.refresh",
+    "onCommand:minimaxUsage.setApiKey",
+    "onCommand:minimaxUsage.clearApiKey",
+    "onCommand:minimaxUsage.copyRawResponse"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "minimaxUsage.refresh",
+        "title": "MiniMax Usage: Refresh"
+      },
+      {
+        "command": "minimaxUsage.setApiKey",
+        "title": "MiniMax Usage: Set API Key"
+      },
+      {
+        "command": "minimaxUsage.clearApiKey",
+        "title": "MiniMax Usage: Clear API Key"
+      },
+      {
+        "command": "minimaxUsage.copyRawResponse",
+        "title": "MiniMax Usage: Copy Raw Response"
+      }
+    ],
+    "configuration": {
+      "title": "MiniMax Usage",
+      "properties": {
+        "minimaxUsage.refreshIntervalSeconds": {
+          "type": "number",
+          "default": 60,
+          "minimum": 15,
+          "maximum": 3600,
+          "description": "Auto refresh interval (seconds)."
+        },
+        "minimaxUsage.showWeeklyInStatusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show weekly usage summary in status bar text."
+        },
+        "minimaxUsage.detailModelLimit": {
+          "type": "number",
+          "default": 8,
+          "minimum": 1,
+          "maximum": 30,
+          "description": "How many models to display in status bar tooltip details."
+        },
+        "minimaxUsage.statusBarAlignment": {
+          "type": "string",
+          "enum": [
+            "left",
+            "right"
+          ],
+          "default": "left",
+          "description": "Alignment of MiniMax usage status item."
+        },
+        "minimaxUsage.requestTimeoutMs": {
+          "type": "number",
+          "default": 15000,
+          "minimum": 3000,
+          "maximum": 60000,
+          "description": "HTTP request timeout in milliseconds."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile",
+    "test": "echo \"No tests configured\""
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "@types/vscode": "^1.116.0",
+    "typescript": "^6.0.2"
+  }
+}
