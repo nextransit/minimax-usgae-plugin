@@ -594,15 +594,57 @@ function updateDetailsPanel(): void {
 }
 
 function renderDetailsPanelHtml(): string {
+  const lang = vscode.env.language;
+  const isEn = lang && lang.startsWith("en");
+
+  const i18n = {
+    unconfiguredKey: isEn ? "Unconfigured API Key" : "未配置加密密钥",
+    unconfiguredDesc: isEn 
+      ? "System core features require MiniMax API Key authorization. Please enter your access key in the console to sync data."
+      : "系统核心功能需要 MiniMax API Key 授权。请在控制台中输入您的访问密钥以同步数据。",
+    initAccess: isEn ? "INITIALIZE ACCESS" : "配置密钥",
+    waitingData: isEn ? "Waiting for Data Link" : "等待数据链路",
+    waitingDesc: isEn
+      ? "Attempting to connect to MiniMax servers and sync the latest Token consumption metrics. Please ensure network connectivity."
+      : "正在尝试连接 MiniMax 服务器并同步最新的 Token 消耗指标。请保持网络畅通。",
+    retrySync: isEn ? "RETRY SYNC" : "重试同步",
+    dataBroken: isEn ? "Data Link Broken" : "数据链路中断",
+    reconnect: isEn ? "RECONNECT" : "重新连接",
+    editKey: isEn ? "EDIT KEY" : "修改密钥",
+    panelTitle: isEn ? "MINIMAX USAGE PANEL" : "MINIMAX 用量监控",
+    model: isEn ? "MODEL" : "当前模型",
+    window: isEn ? "WINDOW" : "时间窗口",
+    unknown: isEn ? "UNKNOWN" : "未知",
+    na: "N/A",
+    currentInterval: isEn ? "CURRENT INTERVAL" : "当前周期",
+    consumed: isEn ? "CONSUMED" : "已使用",
+    available: isEn ? "AVAILABLE" : "剩余量",
+    limit: isEn ? "LIMIT" : "总配额",
+    resourceUtil: isEn ? "RESOURCE UTILIZATION" : "资源使用率",
+    weeklyAggregate: isEn ? "WEEKLY AGGREGATE" : "本周累计",
+    used: isEn ? "USED" : "已使用",
+    left: isEn ? "LEFT" : "剩余量",
+    total: isEn ? "TOTAL" : "总额度",
+    weeklyQuota: isEn ? "WEEKLY QUOTA" : "本周进度",
+    syncedAt: isEn ? "SYNCED AT: " : "最后同步: ",
+    syncData: isEn ? "SYNC DATA" : "刷新数据",
+    keyConfig: isEn ? "KEY CONFIG" : "配置密钥",
+    reset: isEn ? "RESET" : "清除缓存",
+    riskTitle: isEn ? "Risk Warning" : "风险提示",
+    riskRemaining: isEn ? "Current window remaining only " : "当前窗口剩余仅 ",
+    riskExhausted: isEn ? "Quota is almost exhausted. Suggest lowering request frequency or switching models!" : "额度即将耗尽，建议立即降低请求频率或切换模型！",
+    riskFast: isEn ? "Consuming quickly. Please monitor usage to avoid rate limits." : "消耗较快，请注意使用配额以避免被限流。"
+  };
+
   if (!hasApiKey) {
     return renderDetailsHtmlSkeleton(`
-      <div class="empty-state animate-in">
+      <div class="empty-state">
         <div class="empty-icon-glow">🔑</div>
-        <h2>未配置加密密钥</h2>
-        <p>系统核心功能需要 MiniMax API Key 授权。请在控制台中输入您的访问密钥以同步数据。</p>
+        <h2>${i18n.unconfiguredKey}</h2>
+        <p>${i18n.unconfiguredDesc}</p>
         <div class="actions center">
           <a class="btn btn-neon" href="command:minimaxUsage.setApiKey">
-            <span class="btn-text">INITIALIZE ACCESS</span>
+            <span class="btn-text">${i18n.initAccess}</span>
           </a>
         </div>
       </div>
@@ -611,13 +653,13 @@ function renderDetailsPanelHtml(): string {
 
   if (!latestVm) {
     return renderDetailsHtmlSkeleton(`
-      <div class="empty-state animate-in">
+      <div class="empty-state">
         <div class="empty-icon-glow">📡</div>
-        <h2>等待数据链路</h2>
-        <p>正在尝试连接 MiniMax 服务器并同步最新的 Token 消耗指标。请保持网络畅通。</p>
+        <h2>${i18n.waitingData}</h2>
+        <p>${i18n.waitingDesc}</p>
         <div class="actions center">
           <a class="btn btn-neon" href="command:minimaxUsage.refresh">
-            <span class="btn-text">RETRY SYNC</span>
+            <span class="btn-text">${i18n.retrySync}</span>
           </a>
         </div>
       </div>
@@ -626,16 +668,16 @@ function renderDetailsPanelHtml(): string {
 
   if (!latestVm.ok) {
     return renderDetailsHtmlSkeleton(`
-      <div class="empty-state error animate-in">
+      <div class="empty-state error">
         <div class="empty-icon-glow">⚠️</div>
-        <h2>数据链路中断</h2>
+        <h2>${i18n.dataBroken}</h2>
         <p class="error-msg">${escapeHtml(latestVm.statusLabel)}</p>
         <div class="actions center">
           <a class="btn btn-neon danger" href="command:minimaxUsage.refresh">
-            <span class="btn-text">RECONNECT</span>
+            <span class="btn-text">${i18n.reconnect}</span>
           </a>
           <a class="btn" href="command:minimaxUsage.setApiKey">
-            <span class="btn-text">EDIT KEY</span>
+            <span class="btn-text">${i18n.editKey}</span>
           </a>
         </div>
       </div>
@@ -650,23 +692,23 @@ function renderDetailsPanelHtml(): string {
   const windowStatus = usedPercent >= 90 ? "critical" : usedPercent >= 70 ? "warning" : "normal";
   const weeklyStatus = weeklyUsedPercent >= 90 ? "critical" : weeklyUsedPercent >= 70 ? "warning" : "normal";
   
-  const updatedAt = lastUpdatedAt ? formatDateTime(lastUpdatedAt.getTime()) : "N/A";
+  const updatedAt = lastUpdatedAt ? formatDateTime(lastUpdatedAt.getTime()) : i18n.na;
 
   return renderDetailsHtmlSkeleton(`
-    <div class="dashboard animate-in">
+    <div class="dashboard">
       <header class="main-header">
         <div class="logo-area">
           <div class="logo-pulse"></div>
-          <h1 class="glow-text">MINIMAX USAGE PANEL</h1>
+          <h1 class="glow-text">${i18n.panelTitle}</h1>
         </div>
         <div class="header-info">
           <div class="info-tag">
-            <span class="tag-label">MODEL</span>
-            <span class="tag-value">${escapeHtml(latestVm.primaryModelName || "UNKNOWN")}</span>
+            <span class="tag-label">${i18n.model}</span>
+            <span class="tag-value">${escapeHtml(latestVm.primaryModelName || i18n.unknown)}</span>
           </div>
           <div class="info-tag">
-            <span class="tag-label">WINDOW</span>
-            <span class="tag-value">${escapeHtml(latestVm.intervalLabel || "N/A")}</span>
+            <span class="tag-label">${i18n.window}</span>
+            <span class="tag-value">${escapeHtml(latestVm.intervalLabel || i18n.na)}</span>
           </div>
         </div>
       </header>
@@ -676,7 +718,7 @@ function renderDetailsPanelHtml(): string {
         <section class="cyber-card ${windowStatus}">
           <div class="card-glow"></div>
           <div class="card-header">
-            <h3 class="card-title"><span class="icon">⚡</span> CURRENT INTERVAL</h3>
+            <h3 class="card-title"><span class="icon">⚡</span> ${i18n.currentInterval}</h3>
             <div class="reset-timer">
               <span class="timer-icon">⏳</span>
               <span class="timer-value">${escapeHtml(latestVm.resetTimestamp ? formatCountdown(latestVm.resetTimestamp) : "--:--:--")}</span>
@@ -685,27 +727,67 @@ function renderDetailsPanelHtml(): string {
           
           <div class="data-grid">
             <div class="data-item">
-              <span class="data-label">CONSUMED</span>
+              <span class="data-label">${i18n.consumed}</span>
               <span class="data-value highlight">${formatNumber(latestVm.usedCount)}</span>
             </div>
             <div class="data-item">
-              <span class="data-label">AVAILABLE</span>
+              <span class="data-label">${i18n.available}</span>
               <span class="data-value success">${formatNumber(latestVm.remainingCount)}</span>
             </div>
             <div class="data-item">
-              <span class="data-label">LIMIT</span>
+              <span class="data-label">${i18n.limit}</span>
               <span class="data-value">${formatNumber(latestVm.totalCount)}</span>
             </div>
           </div>
 
           <div class="progress-wrap">
             <div class="progress-header">
-              <span class="progress-label">RESOURCE UTILIZATION</span>
+              <span class="progress-label">${i18n.resourceUtil}</span>
               <span class="progress-percent ${windowStatus}">${latestVm.usedPercent}%</span>
             </div>
             <div class="cyber-progress-bar">
               <div class="progress-track"></div>
               <div class="progress-thumb ${windowStatus}" style="width: ${windowProgress}%">
+                <div class="thumb-glow"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Weekly Card -->
+        <section class="cyber-card secondary ${weeklyStatus}">
+          <div class="card-glow"></div>
+          <div class="card-header">
+            <h3 class="card-title"><span class="icon">🗓️</span> ${i18n.weeklyAggregate}</h3>
+            <div class="reset-timer">
+              <span class="timer-icon">🕒</span>
+              <span class="timer-value">${escapeHtml(latestVm.weeklyResetTimestamp ? formatCountdown(latestVm.weeklyResetTimestamp) : "--:--")}</span>
+            </div>
+          </div>
+
+          <div class="data-grid">
+            <div class="data-item">
+              <span class="data-label">${i18n.used}</span>
+              <span class="data-value emphasize">${formatNumber(latestVm.weeklyUsedCount)}</span>
+            </div>
+            <div class="data-item">
+              <span class="data-label">${i18n.left}</span>
+              <span class="data-value success">${formatNumber(latestVm.weeklyRemainingCount)}</span>
+            </div>
+            <div class="data-item">
+              <span class="data-label">${i18n.total}</span>
+              <span class="data-value">${formatNumber(latestVm.weeklyTotalCount)}</span>
+            </div>
+          </div>
+
+          <div class="progress-wrap">
+            <div class="progress-header">
+              <span class="progress-label">${i18n.weeklyQuota}</span>
+              <span class="progress-percent ${weeklyStatus}">${latestVm.weeklyUsedPercent}%</span>
+            </div>
+            <div class="cyber-progress-bar">
+              <div class="progress-track"></div>
+              <div class="progress-thumb secondary ${weeklyStatus}" style="width: ${weeklyProgress}%">
                 <div class="thumb-glow"></div>
               </div>
             </div>
@@ -719,71 +801,31 @@ function renderDetailsPanelHtml(): string {
           <div class="risk-content">
             <div class="risk-icon">${usedPercent >= 90 ? '🚨' : '⚠️'}</div>
             <div class="risk-text">
-              <h3>风险提示</h3>
+              <h3>${i18n.riskTitle}</h3>
               <ul>
-                <li>当前窗口剩余仅 ${100 - usedPercent}%</li>
-                <li>${usedPercent >= 90 ? '额度即将耗尽，建议立即降低请求频率或切换模型！' : '消耗较快，请注意使用配额以避免被限流。'}</li>
+                <li>${i18n.riskRemaining}${100 - usedPercent}%</li>
+                <li>${usedPercent >= 90 ? i18n.riskExhausted : i18n.riskFast}</li>
               </ul>
             </div>
           </div>
         </section>
         ` : ''}
-
-        <!-- Weekly Card -->
-        <section class="cyber-card secondary ${weeklyStatus}">
-          <div class="card-glow"></div>
-          <div class="card-header">
-            <h3 class="card-title"><span class="icon">🗓️</span> WEEKLY AGGREGATE</h3>
-            <div class="reset-timer">
-              <span class="timer-icon">🕒</span>
-              <span class="timer-value">${escapeHtml(latestVm.weeklyResetTimestamp ? formatCountdown(latestVm.weeklyResetTimestamp) : "--:--")}</span>
-            </div>
-          </div>
-
-          <div class="data-grid">
-            <div class="data-item">
-              <span class="data-label">USED</span>
-              <span class="data-value emphasize">${formatNumber(latestVm.weeklyUsedCount)}</span>
-            </div>
-            <div class="data-item">
-              <span class="data-label">LEFT</span>
-              <span class="data-value success">${formatNumber(latestVm.weeklyRemainingCount)}</span>
-            </div>
-            <div class="data-item">
-              <span class="data-label">TOTAL</span>
-              <span class="data-value">${formatNumber(latestVm.weeklyTotalCount)}</span>
-            </div>
-          </div>
-
-          <div class="progress-wrap">
-            <div class="progress-header">
-              <span class="progress-label">WEEKLY QUOTA</span>
-              <span class="progress-percent ${weeklyStatus}">${latestVm.weeklyUsedPercent}%</span>
-            </div>
-            <div class="cyber-progress-bar">
-              <div class="progress-track"></div>
-              <div class="progress-thumb secondary ${weeklyStatus}" style="width: ${weeklyProgress}%">
-                <div class="thumb-glow"></div>
-              </div>
-            </div>
-          </div>
-        </section>
       </div>
 
       <footer class="cyber-footer">
         <div class="system-status">
           <div class="status-indicator"></div>
-          <span class="last-update">SYNCED AT: ${updatedAt}</span>
+          <span class="last-update">${i18n.syncedAt}${updatedAt}</span>
         </div>
         <div class="cyber-actions">
           <a class="action-link neon" href="command:minimaxUsage.refresh">
-            <span class="link-icon">🔄</span> SYNC DATA
+            <span class="link-icon">🔄</span> ${i18n.syncData}
           </a>
           <a class="action-link" href="command:minimaxUsage.setApiKey">
-            <span class="link-icon">🔑</span> KEY CONFIG
+            <span class="link-icon">🔑</span> ${i18n.keyConfig}
           </a>
           <a class="action-link danger" href="command:minimaxUsage.clearApiKey">
-            <span class="link-icon">🗑️</span> RESET
+            <span class="link-icon">🗑️</span> ${i18n.reset}
           </a>
         </div>
       </footer>
