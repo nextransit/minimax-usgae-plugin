@@ -32,6 +32,22 @@
 4. 在命令面板运行 `MiniMax Usage: Set API Key`
 5. 状态栏查看结果（点击可刷新）
 
+## 打包说明
+
+如果需要导出为 `.vsix` 文件进行发布或本地安装：
+
+1. 确保已安装编译环境：
+   ```bash
+   npm run compile
+   ```
+2. 执行打包命令：
+   ```bash
+   # 使用 npx 运行 vsce
+   npx @vscode/vsce package
+   ```
+3. 打包完成后，在该目录下会生成一个 `minimax-usage-statusbar-x.x.x.vsix` 文件。
+4. **手动安装**：在 VS Code 插件面板点击 `...` -> `Install from VSIX...`，选择该文件即可。
+
 ## 配置项
 
 - `minimaxUsage.refreshIntervalSeconds`: 自动刷新间隔（秒）
