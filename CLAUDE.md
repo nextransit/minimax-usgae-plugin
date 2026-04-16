@@ -1,6 +1,13 @@
 # 项目当前工作状态 (AI 辅助)
 
 ## 2026-04-16
+- **完成任务**: 修复 Linux 系统下加载 Webview 报错
+- **改动说明**:
+  - 在创建 `WebviewPanel` 时，显式配置 `enableScripts: false`。
+  - 在 Webview 生成的 HTML `<head>` 中增加了严格的安全策略（CSP）：`<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'none'; font-src 'none'; img-src 'none';">`，彻底避免 Chromium 底层因状态非法引发 ServiceWorker 注册异常报错。
+- **当前状态**: 已编译通过并提交至 Git。
+
+## 2026-04-16
 - **完成任务**: Webview UI 深度优化 (防抖动、布局、国际化)
 - **改动说明**:
   - **防抖动**: 移除了每次全量刷新 HTML 触发的 `animate-in` 入场动画，解决了页面自动刷新时一闪一闪的抖动问题。

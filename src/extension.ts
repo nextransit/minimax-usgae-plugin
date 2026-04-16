@@ -573,6 +573,7 @@ function showDetailsPanel(): void {
     "MiniMax 用量详情",
     vscode.ViewColumn.Active,
     {
+      enableScripts: false,
       enableCommandUris: true,
       retainContextWhenHidden: true,
     },
@@ -838,6 +839,7 @@ function renderDetailsHtmlSkeleton(innerHtml: string): string {
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'none'; font-src 'none'; img-src 'none';">
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <style>
     :root {
