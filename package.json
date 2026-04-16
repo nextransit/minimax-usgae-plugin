@@ -3,8 +3,8 @@
   "displayName": "MiniMax Usage StatusBar",
   "description": "Query MiniMax Token Plan usage and show detailed stats in VS Code status bar.",
   "icon": "images/icon.png",
-  "version": "0.0.5",
-  "publisher": "dc",
+  "version": "0.0.6",
+  "publisher": "decard",
   "license": "MIT",
   "repository": {
     "type": "git",
