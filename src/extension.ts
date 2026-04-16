@@ -1,5 +1,15 @@
 import * as https from "https";
 import * as vscode from "vscode";
+import {
+  buildCompactStatusText,
+  buildCompactTooltipTable,
+  formatEnglishCountdownFriendly,
+  formatEnglishDurationCompact,
+  getCompactTooltipLabels,
+  selectCompactProgressColor,
+  selectCompactStateIcon,
+  selectCompactStatusIcon,
+} from "./compactView";
 
 const SECRET_API_KEY = "minimaxUsage.apiKey";
 const REMAINS_ENDPOINT = "https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains";
@@ -160,8 +170,11 @@ function getRuntimeStrings(config: ExtensionConfig = readConfig()) {
     errorQueryExceptionPrefix: isEn ? "MiniMax query error: " : "MiniMax 查询异常：",
     errorUnknown: isEn ? "Unknown error" : "未知错误",
     statusQuerying: isEn ? "$(sync~spin) MiniMax: Querying..." : "$(sync~spin) MiniMax 查询中...",
+    statusQueryingCompact: isEn ? "Refreshing..." : "刷新中...",
     statusSetApiKey: isEn ? "$(key) MiniMax: Set API Key" : "$(key) MiniMax: 设置 API Key",
+    statusSetApiKeyCompact: isEn ? "Set API Key" : "设置 API Key",
     statusWaitingRefresh: isEn ? "$(sync) MiniMax: Waiting to refresh" : "$(sync) MiniMax: 等待刷新",
+    statusWaitingRefreshCompact: isEn ? "Waiting to refresh" : "等待刷新",
     statusWeekly: isEn ? "  Week: " : "  每周: ",
     tooltipTitle: "MiniMax Token Plan",
     tooltipRefreshing: isEn ? "$(sync~spin) Refreshing data..." : "$(sync~spin) 正在刷新数据...",
@@ -603,7 +616,7 @@ function updateStatusBar(): void {
       specs,
       alignment,
       basePriority,
-      strings.statusQuerying,
+      `${selectCompactStateIcon("refreshing")} ${strings.statusQueryingCompact}`,
       buildRefreshingTooltip(),
       "minimaxUsage.showDetails",
     );
@@ -617,7 +630,7 @@ function updateStatusBar(): void {
       specs,
       alignment,
       basePriority,
-      strings.statusSetApiKey,
+      `${selectCompactStateIcon("missingKey")} ${strings.statusSetApiKeyCompact}`,
       buildMissingKeyTooltip(),
       "minimaxUsage.setApiKey",
       new vscode.ThemeColor("statusBarItem.warningForeground"),
@@ -632,7 +645,7 @@ function updateStatusBar(): void {
       specs,
       alignment,
       basePriority,
-      strings.statusWaitingRefresh,
+      `${selectCompactStateIcon("waiting")} ${strings.statusWaitingRefreshCompact}`,
       buildWaitingTooltip(),
       "minimaxUsage.refresh",
       new vscode.ThemeColor("statusBarItem.prominentForeground"),
@@ -647,7 +660,7 @@ function updateStatusBar(): void {
       specs,
       alignment,
       basePriority,
-      `${isRefreshing ? "$(sync~spin)" : "$(warning)"} MiniMax: ${truncate(latestVm.statusLabel, 40)}`,
+      `${selectCompactStateIcon("error")} ${truncate(latestVm.statusLabel, 40)}`,
       buildDetailsTooltip(latestVm, config),
       "minimaxUsage.showDetails",
       new vscode.ThemeColor("statusBarItem.warningForeground"),
@@ -658,106 +671,46 @@ function updateStatusBar(): void {
     return;
   }
 
-  // 正常显示逻辑 - 分段显示
+  // 正常显示逻辑 - 简化格式
   const tooltip = buildDetailsTooltip(latestVm, config);
   const command = "minimaxUsage.showDetails";
-  const priorityStep = alignment === vscode.StatusBarAlignment.Left ? -1 : 1;
-  let currentPriority = basePriority;
+  const usedPercent = latestVm.usedPercent ?? 0;
+  const resetLabel = latestVm.resetTimestamp
+    ? formatEnglishCountdownFriendly(latestVm.resetTimestamp)
+    : "";
+  const percentColor = selectCompactProgressColor(usedPercent);
+  const weeklyPercent =
+    config.showWeeklyInStatusBar && latestVm.weeklyUsedPercent !== null
+      ? latestVm.weeklyUsedPercent ?? 0
+      : null;
+  const weeklyResetLabel =
+    config.showWeeklyInStatusBar && latestVm.weeklyResetTimestamp
+      ? formatEnglishCountdownFriendly(latestVm.weeklyResetTimestamp)
+      : "";
+  const statusIcon = selectCompactStatusIcon({
+    currentPercent: usedPercent,
+    weeklyPercent,
+  });
+  const compactStatusText = buildCompactStatusText({
+    icon: statusIcon,
+    currentPercent: usedPercent,
+    currentResetLabel: resetLabel,
+    weeklyPercent,
+    weeklyResetLabel,
+  });
 
-  // 1. 周期时长
-  if (latestVm.intervalLabel) {
-    addStatusItem(
-      specs,
-      alignment,
-      currentPriority,
-      `${isRefreshing ? "$(sync~spin) " : ""}${latestVm.intervalLabel}: `,
-      tooltip,
-      command,
-      "#888888",
-    );
-    currentPriority += priorityStep;
-  }
-
-  // 2. 当前配额百分比
-  const percentText = latestVm.usedPercent === null ? "-" : `${latestVm.usedPercent}%`;
-  const primaryPercentText = !latestVm.intervalLabel && isRefreshing
-    ? `$(sync~spin) ${percentText}`
-    : percentText;
   addStatusItem(
     specs,
     alignment,
-    currentPriority,
-    primaryPercentText,
+    basePriority,
+    `${isRefreshing ? "$(sync~spin) " : ""}${compactStatusText}`,
     tooltip,
     command,
-    getPercentColor(latestVm.usedPercent),
+    percentColor,
   );
-  currentPriority += priorityStep;
-
-  // 3. 当前重置时间
-  const resetLabel = latestVm.resetTimestamp ? formatCountdownFriendly(latestVm.resetTimestamp) : "";
-  if (resetLabel) {
-    addStatusItem(
-      specs,
-      alignment,
-      currentPriority,
-      ` $(clock) ${resetLabel}`,
-      tooltip,
-      command,
-      "#888888",
-    );
-    currentPriority += priorityStep;
-  }
-
-  // 4. 每周配额 (可选)
-  if (config.showWeeklyInStatusBar && latestVm.weeklyUsedPercent !== null) {
-    addStatusItem(specs, alignment, currentPriority, strings.statusWeekly, tooltip, command, "#888888");
-    currentPriority += priorityStep;
-
-    addStatusItem(
-      specs,
-      alignment,
-      currentPriority,
-      `${latestVm.weeklyUsedPercent}%`,
-      tooltip,
-      command,
-      getPercentColor(latestVm.weeklyUsedPercent),
-    );
-    currentPriority += priorityStep;
-
-    const weeklyResetLabel = latestVm.weeklyResetTimestamp
-      ? formatCountdownFriendly(latestVm.weeklyResetTimestamp)
-      : "";
-    if (weeklyResetLabel) {
-      addStatusItem(
-        specs,
-        alignment,
-        currentPriority,
-        ` $(clock) ${weeklyResetLabel}`,
-        tooltip,
-        command,
-        "#888888",
-      );
-      currentPriority += priorityStep;
-    }
-  }
 
   renderStatusItems(specs);
   updateDetailsPanel();
-}
-
-function getPercentColor(percent: number | null): string {
-  if (percent === null) {
-    return "#888888";
-  }
-
-  if (percent >= 90) {
-    return "#ff4d4f"; // 红色
-  }
-  if (percent >= 70) {
-    return "#faad14"; // 橙色/黄色
-  }
-  return "#52c41a"; // 绿色
 }
 
 function buildRefreshingTooltip(): vscode.MarkdownString {
@@ -1984,73 +1937,38 @@ function buildDetailsTooltip(vm: UsageViewModel, config: ExtensionConfig): vscod
   const md = new vscode.MarkdownString();
   md.isTrusted = true;
   md.supportThemeIcons = true;
+  md.supportHtml = true;
 
-  md.appendMarkdown(`**${strings.detailTooltipHeading}**\n\n`);
+  md.appendMarkdown(`**${strings.tooltipTitle}**\n\n`);
+
+  if (!vm.ok || vm.usedCount === null || vm.totalCount === null || vm.usedPercent === null) {
+    md.appendMarkdown(`${escapeMarkdown(vm.statusLabel)}\n\n`);
+    md.appendMarkdown(
+      `[$(refresh) ${strings.actionRefresh}](command:minimaxUsage.refresh) · [$(key) ${strings.actionSetKey}](command:minimaxUsage.setApiKey)`,
+    );
+    return md;
+  }
+
+  const tooltipLabels = getCompactTooltipLabels(strings.language);
+  const compactTable = buildCompactTooltipTable({
+    currentLabel: tooltipLabels.current,
+    currentUsed: vm.usedCount,
+    currentTotal: vm.totalCount,
+    currentPercent: vm.usedPercent,
+    weeklyLabel:
+      vm.weeklyUsedCount !== null && vm.weeklyTotalCount !== null && vm.weeklyUsedPercent !== null
+        ? tooltipLabels.weekly
+        : undefined,
+    weeklyUsed: vm.weeklyUsedCount,
+    weeklyTotal: vm.weeklyTotalCount,
+    weeklyPercent: vm.weeklyUsedPercent,
+  });
+
+  md.appendMarkdown(compactTable);
+  md.appendMarkdown("\n\n");
   md.appendMarkdown(
-    `${strings.detailStatus}${strings.labelSeparator}${vm.ok ? "✅" : "❌"} ${escapeMarkdown(vm.statusLabel)}  \n`,
+    `[$(refresh) ${strings.actionRefresh}](command:minimaxUsage.refresh) · [$(key) ${strings.actionSetKey}](command:minimaxUsage.setApiKey)`,
   );
-
-  if (vm.primaryModelName) {
-    md.appendMarkdown(
-      `${strings.detailPrimaryModel}${strings.labelSeparator}${escapeMarkdown(vm.primaryModelName)}  \n`,
-    );
-  }
-
-  if (vm.timeWindow) {
-    md.appendMarkdown(`${strings.detailTimeWindow}${strings.labelSeparator}${escapeMarkdown(vm.timeWindow)}  \n`);
-  }
-
-  if (vm.resetTimestamp) {
-    md.appendMarkdown(
-      `${strings.detailResetCountdown}${strings.labelSeparator}${formatCountdown(vm.resetTimestamp)}  \n`,
-    );
-  }
-
-  md.appendMarkdown(`\n| ${strings.detailMetric} | ${strings.detailValue} |\n| --- | --- |\n`);
-  md.appendMarkdown(`| ${strings.detailUsed} | ${formatNumber(vm.usedCount)} |\n`);
-  md.appendMarkdown(`| ${strings.detailRemaining} | ${formatNumber(vm.remainingCount)} |\n`);
-  md.appendMarkdown(`| ${strings.detailTotal} | ${formatNumber(vm.totalCount)} |\n`);
-  md.appendMarkdown(`| ${strings.detailWindowProgress} | ${vm.usedPercent === null ? "-" : `${vm.usedPercent}%`} |\n`);
-
-  if (vm.weeklyTotalCount !== null) {
-    md.appendMarkdown(`| ${strings.detailWeeklyUsed} | ${formatNumber(vm.weeklyUsedCount)} |\n`);
-    md.appendMarkdown(`| ${strings.detailWeeklyRemaining} | ${formatNumber(vm.weeklyRemainingCount)} |\n`);
-    md.appendMarkdown(`| ${strings.detailWeeklyTotal} | ${formatNumber(vm.weeklyTotalCount)} |\n`);
-    md.appendMarkdown(`| ${strings.detailWeeklyProgress} | ${vm.weeklyUsedPercent === null ? "-" : `${vm.weeklyUsedPercent}%`} |\n`);
-
-    if (vm.weeklyResetTimestamp) {
-      md.appendMarkdown(`| ${strings.detailWeeklyResetCountdown} | ${formatCountdown(vm.weeklyResetTimestamp)} |\n`);
-    }
-  }
-
-  if (vm.models.length > 0) {
-    const modelLimit = Math.min(config.detailModelLimit, vm.models.length);
-    md.appendMarkdown(`\n**${strings.detailModelListTitle(modelLimit)}**\n\n`);
-    md.appendMarkdown(
-      `| ${strings.panelModelName} | ${strings.detailUsed} | ${strings.detailRemaining} | ${strings.detailTotal} | ${strings.detailTimeWindow} |\n| --- | --- | --- | --- | --- |\n`,
-    );
-
-    for (const model of vm.models.slice(0, modelLimit)) {
-      md.appendMarkdown(
-        `| ${escapeMarkdown(model.name)} | ${formatNumber(model.usedCount)} | ${formatNumber(model.remainingCount)} | ${formatNumber(model.totalCount)} | ${escapeMarkdown(model.timeWindow || "-")} |\n`,
-      );
-    }
-  }
-
-  if (lastUpdatedAt) {
-    md.appendMarkdown(
-      `\n${strings.detailUpdatedAt}${strings.labelSeparator}${escapeMarkdown(formatDateTime(lastUpdatedAt.getTime()))}  \n`,
-    );
-  }
-
-  md.appendMarkdown("\n");
-  md.appendMarkdown(`[$(refresh) ${strings.actionRefresh}](command:minimaxUsage.refresh)`);
-  md.appendMarkdown(" · ");
-  md.appendMarkdown(`[$(key) ${strings.actionSetKey}](command:minimaxUsage.setApiKey)`);
-  md.appendMarkdown(" · ");
-  md.appendMarkdown(`[$(trash) ${strings.actionClearKey}](command:minimaxUsage.clearApiKey)`);
-  md.appendMarkdown(" · ");
-  md.appendMarkdown(`[$(copy) ${strings.actionCopyRaw}](command:minimaxUsage.copyRawResponse)`);
 
   return md;
 }
@@ -2168,7 +2086,7 @@ function buildUsageViewModel(result: RemainsResult): UsageViewModel {
         ? formatDuration(primaryModel.remains_time)
         : "",
     intervalLabel: hasTimeWindow
-      ? formatDurationCompact(
+      ? formatEnglishDurationCompact(
           (primaryModel.end_time as number) - (primaryModel.start_time as number),
         )
       : "",
@@ -2302,43 +2220,6 @@ function formatDuration(milliseconds: number): string {
   }
 
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-}
-
-function formatDurationCompact(milliseconds: number): string {
-  const strings = getRuntimeStrings();
-  const totalSeconds = Math.max(0, Math.ceil(milliseconds / 1000));
-  const days = Math.floor(totalSeconds / (3600 * 24));
-  const hours = Math.floor((totalSeconds % (3600 * 24)) / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-
-  if (days > 0) {
-    return `${days}${strings.durationDay}`;
-  }
-  if (hours > 0) {
-    return `${hours}${strings.durationHour}`;
-  }
-  return `${minutes}${strings.durationMinute}`;
-}
-
-function formatCountdownFriendly(targetTimestamp: number): string {
-  const strings = getRuntimeStrings();
-  const diff = Math.max(targetTimestamp - Date.now(), 0);
-  const totalSeconds = Math.ceil(diff / 1000);
-  const days = Math.floor(totalSeconds / (24 * 3600));
-  const hours = Math.floor((totalSeconds % (24 * 3600)) / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-
-  if (days > 0) {
-    return `${days}${strings.durationDay}${hours}${strings.durationHour}`;
-  }
-  if (hours > 0) {
-    return `${hours}${strings.durationHour}${minutes}${strings.durationMinute}`;
-  }
-  return `${minutes}${strings.durationMinute}`;
-}
-
-function formatCountdown(targetTimestamp: number): string {
-  return formatDuration(Math.max(targetTimestamp - Date.now(), 0));
 }
 
 function truncate(value: string, maxLength: number): string {
