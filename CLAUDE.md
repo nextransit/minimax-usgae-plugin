@@ -1,6 +1,13 @@
 # 项目当前工作状态 (AI 辅助)
 
 ## 2026-04-16
+- **完成任务**: 升级版本到 0.0.6
+- **改动说明**:
+  - 在 `package.json` 中将 `version` 字段从 0.0.5 升级至 `0.0.6`。
+  - 使用 `npm run package` 成功构建输出了新版本的插件包 `minimax-usage-statusbar-0.0.6.vsix`。
+- **当前状态**: 已完成打包并提交。
+
+## 2026-04-16
 - **完成任务**: 修复 Linux 系统下加载 Webview 报错
 - **改动说明**:
   - 在创建 `WebviewPanel` 时，显式配置 `enableScripts: false`。
