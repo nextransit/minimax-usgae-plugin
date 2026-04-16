@@ -498,75 +498,163 @@ function renderDetailsPanelHtml(): string {
 
   if (!hasApiKey) {
     return renderDetailsHtmlSkeleton(`
-      <h2>未配置 API Key</h2>
-      <p>请先设置 MiniMax API Key，然后再查看详细数据。</p>
-      ${actions}
+      <div class="container animate-in">
+        <div class="empty-state">
+          <span class="icon" style="font-size: 48px;">🔑</span>
+          <h2>未配置 API Key</h2>
+          <p>请先设置 MiniMax API Key，然后再查看详细查询数据。</p>
+          <div class="actions" style="justify-content: center;">
+            <a class="btn btn-primary" href="command:minimaxUsage.setApiKey">去设置 API Key</a>
+          </div>
+        </div>
+      </div>
     `);
   }
 
   if (!latestVm) {
     return renderDetailsHtmlSkeleton(`
-      <h2>暂无数据</h2>
-      <p>正在等待首次查询结果，请点击刷新。</p>
-      ${actions}
+      <div class="container animate-in">
+        <div class="empty-state">
+          <span class="icon" style="font-size: 48px;">⏳</span>
+          <h2>暂无数据</h2>
+          <p>正在等待首次查询结果，请点击下方刷新按钮。</p>
+          <div class="actions" style="justify-content: center;">
+            <a class="btn btn-primary" href="command:minimaxUsage.refresh">手动刷新数据</a>
+          </div>
+        </div>
+      </div>
     `);
   }
 
   if (!latestVm.ok) {
     return renderDetailsHtmlSkeleton(`
-      <h2>查询失败</h2>
-      <p class="error-text">${escapeHtml(latestVm.statusLabel)}</p>
-      ${actions}
+      <div class="container animate-in">
+        <div class="card error-card">
+          <div class="card-header">
+            <div class="card-title-group">
+              <span class="icon">⚠️</span>
+              <h3 class="card-title">查询失败</h3>
+            </div>
+          </div>
+          <p class="error-message">${escapeHtml(latestVm.statusLabel)}</p>
+          <div class="actions">
+            <a class="btn btn-primary" href="command:minimaxUsage.refresh">重试刷新</a>
+            <a class="btn" href="command:minimaxUsage.setApiKey">检查 Key 配置</a>
+          </div>
+        </div>
+      </div>
     `);
   }
 
   const windowProgress = clampPercent(latestVm.usedPercent);
   const weeklyProgress = clampPercent(latestVm.weeklyUsedPercent);
+  const windowProgressText = latestVm.usedPercent === null ? "-" : `${latestVm.usedPercent}%`;
   const weeklyProgressText = latestVm.weeklyUsedPercent === null ? "-" : `${latestVm.weeklyUsedPercent}%`;
+  const windowProgressRatio = `${formatNumber(latestVm.usedCount)}/${formatNumber(latestVm.totalCount)}`;
+  const weeklyProgressRatio = `${formatNumber(latestVm.weeklyUsedCount)}/${formatNumber(latestVm.weeklyTotalCount)}`;
   const updatedAt = lastUpdatedAt ? formatDateTime(lastUpdatedAt.getTime()) : "-";
 
   return renderDetailsHtmlSkeleton(`
-    <h2>MiniMax Token Plan 三行详情</h2>
-    <p class="meta">主模型：${escapeHtml(latestVm.primaryModelName || "-")} ｜ 时间窗口：${escapeHtml(latestVm.timeWindow || "-")}</p>
+    <div class="container animate-in">
+      <header class="header">
+        <h1 class="title">MiniMax Token Plan</h1>
+        <div class="header-meta">
+          <span class="badge">主模型：${escapeHtml(latestVm.primaryModelName || "-")}</span>
+          <span class="badge">窗口：${escapeHtml(latestVm.timeWindow || "-")}</span>
+        </div>
+      </header>
 
-    <div class="line-card">
-      <div class="line-title">1) 当前窗口</div>
-      <div class="line-content">
-        <span class="kv used">已使用 ${formatNumber(latestVm.usedCount)}</span>
-        <span class="kv remaining">剩余 ${formatNumber(latestVm.remainingCount)}</span>
-        <span class="kv total">总额度 ${formatNumber(latestVm.totalCount)}</span>
-        <span class="kv reset">窗口重置 ${escapeHtml(latestVm.resetTimestamp ? formatCountdown(latestVm.resetTimestamp) : "-")}</span>
+      <div class="grid">
+        <div class="card card-primary">
+          <div class="card-header">
+            <div class="card-title-group">
+              <span class="icon">📊</span>
+              <h3 class="card-title">当前窗口</h3>
+            </div>
+            <span class="countdown">重置倒计时: ${escapeHtml(latestVm.resetTimestamp ? formatCountdown(latestVm.resetTimestamp) : "-")}</span>
+          </div>
+          
+          <div class="stats-grid">
+            <div class="stat-item">
+              <span class="stat-label">已使用</span>
+              <span class="stat-value used">${formatNumber(latestVm.usedCount)}</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">剩余</span>
+              <span class="stat-value remaining">${formatNumber(latestVm.remainingCount)}</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">总额度</span>
+              <span class="stat-value total">${formatNumber(latestVm.totalCount)}</span>
+            </div>
+          </div>
+
+          <div class="progress-section">
+            <div class="progress-info">
+              <span class="progress-ratio">${escapeHtml(windowProgressRatio)}</span>
+              <span class="progress-percent current">${escapeHtml(windowProgressText)}</span>
+            </div>
+            <div class="progress-bar">
+              <div class="progress-fill current" style="width:${windowProgress}%">
+                <div class="progress-glow"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card card-secondary">
+          <div class="card-header">
+            <div class="card-title-group">
+              <span class="icon">🗓️</span>
+              <h3 class="card-title">本周汇总</h3>
+            </div>
+            <span class="countdown">重置倒计时: ${escapeHtml(latestVm.weeklyResetTimestamp ? formatCountdown(latestVm.weeklyResetTimestamp) : "-")}</span>
+          </div>
+
+          <div class="stats-grid">
+            <div class="stat-item">
+              <span class="stat-label">本周已用</span>
+              <span class="stat-value weekly-used">${formatNumber(latestVm.weeklyUsedCount)}</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">本周剩余</span>
+              <span class="stat-value weekly-remaining">${formatNumber(latestVm.weeklyRemainingCount)}</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">本周总额度</span>
+              <span class="stat-value weekly-total">${formatNumber(latestVm.weeklyTotalCount)}</span>
+            </div>
+          </div>
+
+          <div class="progress-section">
+            <div class="progress-info">
+              <span class="progress-ratio">${escapeHtml(weeklyProgressRatio)}</span>
+              <span class="progress-percent weekly">${escapeHtml(weeklyProgressText)}</span>
+            </div>
+            <div class="progress-bar">
+              <div class="progress-fill weekly" style="width:${weeklyProgress}%">
+                <div class="progress-glow"></div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
-      <div class="progress-track">
-        <div class="progress-fill current" style="width:${windowProgress}%"></div>
-      </div>
+
+      <footer class="footer">
+        <div class="update-time">最后更新：${escapeHtml(updatedAt)}</div>
+        <div class="actions">
+          <a class="btn btn-primary" href="command:minimaxUsage.refresh">
+            <span class="icon">🔄</span> 刷新
+          </a>
+          <a class="btn" href="command:minimaxUsage.setApiKey">
+            <span class="icon">🔑</span> 设置 Key
+          </a>
+          <a class="btn btn-danger" href="command:minimaxUsage.clearApiKey">
+            <span class="icon">🗑️</span> 清除 Key
+          </a>
+        </div>
+      </footer>
     </div>
-
-    <div class="line-card">
-      <div class="line-title">2) 本周汇总</div>
-      <div class="line-content">
-        <span class="kv used-week">本周已使用 ${formatNumber(latestVm.weeklyUsedCount)}</span>
-        <span class="kv remaining-week">本周剩余 ${formatNumber(latestVm.weeklyRemainingCount)}</span>
-        <span class="kv total-week">本周总额度 ${formatNumber(latestVm.weeklyTotalCount)}</span>
-        <span class="kv reset-week">本周重置 ${escapeHtml(latestVm.weeklyResetTimestamp ? formatCountdown(latestVm.weeklyResetTimestamp) : "-")}</span>
-      </div>
-      <div class="progress-track">
-        <div class="progress-fill weekly" style="width:${weeklyProgress}%"></div>
-      </div>
-    </div>
-
-    <div class="line-card">
-      <div class="line-title">3) 本周使用进度</div>
-      <div class="line-content">
-        <span class="kv progress-label">本周使用进度 <strong>${escapeHtml(weeklyProgressText)}</strong></span>
-      </div>
-      <div class="progress-track progress-track-large">
-        <div class="progress-fill weekly-strong" style="width:${weeklyProgress}%"></div>
-      </div>
-    </div>
-
-    <p class="meta">更新时间：${escapeHtml(updatedAt)}</p>
-    ${actions}
   `);
 }
 
@@ -577,94 +665,339 @@ function renderDetailsHtmlSkeleton(innerHtml: string): string {
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <style>
+    :root {
+      --primary: #3b82f6;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --card-bg: color-mix(in srgb, var(--vscode-editor-background) 95%, #fff 5%);
+      --card-border: color-mix(in srgb, var(--vscode-editor-background) 80%, #777 20%);
+      --text-main: var(--vscode-editor-foreground);
+      --text-dim: var(--vscode-descriptionForeground);
+      --glass-bg: rgba(255, 255, 255, 0.03);
+      --glass-border: rgba(255, 255, 255, 0.1);
+    }
+
     body {
       margin: 0;
-      padding: 16px;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      color: var(--vscode-editor-foreground);
+      padding: 20px;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: var(--text-main);
       background: var(--vscode-editor-background);
+      line-height: 1.6;
+      overflow-x: hidden;
     }
-    h2 {
-      margin: 0 0 8px;
-      font-size: 16px;
-      line-height: 1.4;
+
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
     }
-    p {
+
+    .animate-in {
+      animation: fadeInScale 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    @keyframes fadeInScale {
+      from { opacity: 0; transform: scale(0.98) translateY(10px); }
+      to { opacity: 1; transform: scale(1) translateY(0); }
+    }
+
+    .header {
+      margin-bottom: 24px;
+    }
+
+    .title {
+      font-size: 24px;
+      font-weight: 800;
       margin: 0 0 12px;
-      line-height: 1.5;
-      color: var(--vscode-descriptionForeground);
+      background: linear-gradient(135deg, var(--primary), #8b5cf6);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      letter-spacing: -0.5px;
     }
-    .meta {
-      font-size: 12px;
-      color: var(--vscode-descriptionForeground);
-    }
-    .line-card {
-      border: 1px solid var(--vscode-panel-border);
-      border-radius: 8px;
-      padding: 12px;
-      margin-bottom: 12px;
-      background: color-mix(in srgb, var(--vscode-editor-background) 80%, #000 20%);
-    }
-    .line-title {
-      font-weight: 700;
-      margin-bottom: 8px;
-      color: var(--vscode-editor-foreground);
-    }
-    .line-content {
-      display: grid;
-      gap: 6px;
-      margin-bottom: 8px;
-      font-size: 13px;
-    }
-    .kv { display: inline-block; }
-    .used { color: #ff6b6b; }
-    .remaining { color: #2fbf71; }
-    .total { color: #5aa9ff; }
-    .reset { color: #f5a623; }
-    .used-week { color: #ff8fab; }
-    .remaining-week { color: #59cd90; }
-    .total-week { color: #8e9aaf; }
-    .reset-week { color: #f4a261; }
-    .progress-label { color: #a78bfa; font-size: 14px; }
-    .error-text { color: #ff6b6b; font-weight: 600; }
-    .progress-track {
-      width: 100%;
-      height: 8px;
-      border-radius: 99px;
-      background: color-mix(in srgb, var(--vscode-editor-background) 70%, #222 30%);
-      overflow: hidden;
-    }
-    .progress-track-large { height: 12px; }
-    .progress-fill {
-      height: 100%;
-      transition: width 220ms ease;
-    }
-    .progress-fill.current { background: linear-gradient(90deg, #5aa9ff, #2dd4bf); }
-    .progress-fill.weekly { background: linear-gradient(90deg, #f59e0b, #ef4444); }
-    .progress-fill.weekly-strong { background: linear-gradient(90deg, #a78bfa, #f472b6); }
-    .actions {
-      margin-top: 8px;
+
+    .header-meta {
       display: flex;
-      gap: 8px;
+      gap: 12px;
       flex-wrap: wrap;
     }
-    .action-btn {
-      display: inline-block;
-      text-decoration: none;
-      font-size: 12px;
+
+    .badge {
+      font-size: 11px;
       padding: 4px 10px;
-      border: 1px solid var(--vscode-button-border, transparent);
+      background: var(--glass-bg);
+      border: 1px solid var(--glass-border);
       border-radius: 6px;
-      color: var(--vscode-button-foreground);
-      background: var(--vscode-button-background);
+      color: var(--text-dim);
     }
-    .action-btn:hover {
-      background: var(--vscode-button-hoverBackground);
+
+    .grid {
+      display: grid;
+      gap: 16px;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
     }
-    .action-btn.danger {
-      background: #7f1d1d;
-      color: #fff;
-      border-color: #991b1b;
+
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 24px;
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.12);
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .card:hover {
+      border-color: var(--primary);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.16);
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 24px;
+    }
+
+    .card-title-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .icon {
+      font-size: 20px;
+    }
+
+    .card-title {
+      font-size: 16px;
+      font-weight: 700;
+      margin: 0;
+      color: var(--text-main);
+    }
+
+    .countdown {
+      font-size: 11px;
+      color: var(--warning);
+      background: color-mix(in srgb, var(--warning) 12%, transparent);
+      padding: 4px 8px;
+      border-radius: 6px;
+      font-weight: 600;
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-bottom: 28px;
+    }
+
+    .stat-item {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .stat-label {
+      font-size: 10px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      font-weight: 600;
+    }
+
+    .stat-value {
+      font-size: 18px;
+      font-weight: 700;
+      font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+    }
+
+    .stat-value.used { color: var(--danger); }
+    .stat-value.remaining { color: var(--success); }
+    .stat-value.total { color: var(--primary); }
+    .stat-value.weekly-used { color: #ec4899; }
+    .stat-value.weekly-remaining { color: #10b981; }
+    .stat-value.weekly-total { color: #64748b; }
+
+    .progress-section {
+      margin-top: auto;
+    }
+
+    .progress-info {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      font-size: 12px;
+      margin-bottom: 10px;
+    }
+
+    .progress-ratio {
+      color: var(--text-dim);
+      font-family: 'SF Mono', monospace;
+      font-size: 11px;
+    }
+
+    .progress-percent {
+      font-weight: 800;
+      font-size: 14px;
+    }
+
+    .progress-percent.current { color: var(--primary); }
+    .progress-percent.weekly { color: var(--danger); }
+
+    .progress-bar {
+      height: 10px;
+      background: color-mix(in srgb, var(--text-dim) 15%, transparent);
+      border-radius: 5px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .progress-fill {
+      height: 100%;
+      border-radius: 5px;
+      transition: width 1s cubic-bezier(0.34, 1.56, 0.64, 1);
+      position: relative;
+    }
+
+    .progress-fill.current {
+      background: linear-gradient(90deg, #60a5fa, #3b82f6);
+    }
+
+    .progress-fill.weekly {
+      background: linear-gradient(90deg, #fb923c, #ef4444);
+    }
+
+    .progress-glow {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: linear-gradient(
+        90deg,
+        transparent,
+        rgba(255, 255, 255, 0.2),
+        transparent
+      );
+      animation: shimmer 2s infinite;
+    }
+
+    @keyframes shimmer {
+      0% { transform: translateX(-100%); }
+      100% { transform: translateX(100%); }
+    }
+
+    .footer {
+      margin-top: 40px;
+      padding-top: 24px;
+      border-top: 1px solid var(--card-border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 20px;
+    }
+
+    .update-time {
+      font-size: 12px;
+      color: var(--text-dim);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .update-time::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      background: var(--success);
+      border-radius: 50%;
+      box-shadow: 0 0 8px var(--success);
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+    }
+
+    .btn {
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      text-decoration: none;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid var(--card-border);
+      color: var(--text-main);
+      background: var(--glass-bg);
+      cursor: pointer;
+    }
+
+    .btn:hover {
+      background: var(--glass-border);
+      transform: translateY(-2px);
+      border-color: var(--text-dim);
+    }
+
+    .btn:active {
+      transform: translateY(0);
+    }
+
+    .btn-primary {
+      background: var(--primary);
+      color: white;
+      border-color: var(--primary);
+    }
+
+    .btn-primary:hover {
+      background: #2563eb;
+      box-shadow: 0 4px 16px rgba(37, 99, 235, 0.4);
+    }
+
+    .btn-danger:hover {
+      background: var(--danger);
+      color: white;
+      border-color: var(--danger);
+      box-shadow: 0 4px 16px rgba(239, 68, 68, 0.4);
+    }
+
+    .empty-state {
+      padding: 60px 20px;
+      text-align: center;
+      background: var(--card-bg);
+      border-radius: 16px;
+      border: 1px dashed var(--card-border);
+    }
+
+    .empty-state h2 {
+      font-size: 20px;
+      margin-bottom: 12px;
+      color: var(--text-main);
+    }
+
+    .empty-state p {
+      color: var(--text-dim);
+      margin-bottom: 24px;
+    }
+
+    .error-card {
+      background: color-mix(in srgb, var(--danger) 8%, var(--card-bg));
+      border: 1px solid color-mix(in srgb, var(--danger) 30%, var(--card-border));
+    }
+
+    .error-message {
+      color: var(--danger);
+      font-weight: 600;
+      margin-bottom: 16px;
     }
   </style>
 </head>
