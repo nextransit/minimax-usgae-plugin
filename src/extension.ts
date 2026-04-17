@@ -583,10 +583,10 @@ async function refreshUsage(reason: "startup" | "auto" | "manual"): Promise<void
       }
     }
 
-    if (!result.ok && reason === "manual") {
-      void vscode.window.showErrorMessage(`${strings.errorQueryFailedPrefix}${result.summary}`);
-    }
-  } catch (error) {
+      if (!result.ok && reason === "manual") {
+        void vscode.window.showErrorMessage(`${strings.errorQueryFailedPrefix}${result.summary}`);
+      }
+    } catch (error) {
     const message = error instanceof Error ? error.message : strings.errorUnknown;
     latestVm = buildErrorViewModel(message);
     latestRawResponse = null;
@@ -598,6 +598,18 @@ async function refreshUsage(reason: "startup" | "auto" | "manual"): Promise<void
   } finally {
     isRefreshing = false;
     updateStatusBar();
+
+    // 手动刷新后，短暂隐藏/显示 status bar item 以强制刷新 tooltip
+    if (reason === "manual") {
+      for (const entry of statusItems) {
+        entry.item.hide();
+      }
+      setTimeout(() => {
+        for (const entry of statusItems) {
+          entry.item.show();
+        }
+      }, 50);
+    }
   }
 }
 
