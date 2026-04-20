@@ -979,7 +979,7 @@ function renderDetailsPanelHtml(): string {
             </div>
             <div class="data-item">
               <span class="data-label">${i18n.available}</span>
-              <span class="data-value success">${formatNumber(latestVm.remainingCount)}</span>
+              <span class="data-value success ${windowStatus}">${formatNumber(latestVm.remainingCount)}</span>
             </div>
             <div class="data-item">
               <span class="data-label">${i18n.limit}</span>
@@ -1019,7 +1019,7 @@ function renderDetailsPanelHtml(): string {
             </div>
             <div class="data-item">
               <span class="data-label">${i18n.left}</span>
-              <span class="data-value success">${formatNumber(latestVm.weeklyRemainingCount)}</span>
+              <span class="data-value success ${weeklyStatus}">${formatNumber(latestVm.weeklyRemainingCount)}</span>
             </div>
             <div class="data-item">
               <span class="data-label">${i18n.total}</span>
@@ -1304,7 +1304,25 @@ function renderDetailsHtmlSkeleton(innerHtml: string): string {
 
     .data-value.highlight { color: var(--primary); }
     .data-value.emphasize { color: var(--secondary); }
-    .data-value.success { color: var(--success); }
+    .data-value.success { 
+      color: var(--success); 
+      animation: breathe-number 2s ease-in-out infinite;
+    }
+    .data-value.success.warning { color: var(--warning); }
+    .data-value.success.critical { color: var(--danger); }
+
+    @keyframes breathe-number {
+      0%, 100% {
+        font-size: 18px;
+        opacity: 0.8;
+        text-shadow: 0 0 4px var(--success);
+      }
+      50% {
+        font-size: 22px;
+        opacity: 1;
+        text-shadow: 0 0 12px var(--success), 0 0 24px var(--success);
+      }
+    }
 
     /* Progress Styles */
     .progress-wrap {
