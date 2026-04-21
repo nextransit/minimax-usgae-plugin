@@ -977,9 +977,9 @@ function renderDetailsPanelHtml(): string {
               <span class="data-label">${i18n.consumed}</span>
               <span class="data-value highlight">${formatNumber(latestVm.usedCount)}</span>
             </div>
-            <div class="data-item">
+            <div class="data-item breathing-metric ${windowStatus}">
               <span class="data-label">${i18n.available}</span>
-              <span class="data-value success ${windowStatus}">${formatNumber(latestVm.remainingCount)}</span>
+              <span class="data-value success remaining-breath ${windowStatus}">${formatNumber(latestVm.remainingCount)}</span>
             </div>
             <div class="data-item">
               <span class="data-label">${i18n.limit}</span>
@@ -1017,9 +1017,9 @@ function renderDetailsPanelHtml(): string {
               <span class="data-label">${i18n.used}</span>
               <span class="data-value emphasize">${formatNumber(latestVm.weeklyUsedCount)}</span>
             </div>
-            <div class="data-item">
+            <div class="data-item breathing-metric ${weeklyStatus}">
               <span class="data-label">${i18n.left}</span>
-              <span class="data-value success ${weeklyStatus}">${formatNumber(latestVm.weeklyRemainingCount)}</span>
+              <span class="data-value success remaining-breath ${weeklyStatus}">${formatNumber(latestVm.weeklyRemainingCount)}</span>
             </div>
             <div class="data-item">
               <span class="data-label">${i18n.total}</span>
@@ -1286,6 +1286,7 @@ function renderDetailsHtmlSkeleton(innerHtml: string): string {
       display: flex;
       flex-direction: column;
       gap: 4px;
+      position: relative;
     }
 
     .data-label {
@@ -1304,23 +1305,86 @@ function renderDetailsHtmlSkeleton(innerHtml: string): string {
 
     .data-value.highlight { color: var(--primary); }
     .data-value.emphasize { color: var(--secondary); }
-    .data-value.success { 
-      color: var(--success); 
-      animation: breathe-number 2s ease-in-out infinite;
-    }
+    .data-value.success { color: var(--success); }
     .data-value.success.warning { color: var(--warning); }
     .data-value.success.critical { color: var(--danger); }
+
+    .breathing-metric {
+      --breath-color: var(--success);
+      --breath-rgb: 16, 185, 129;
+      isolation: isolate;
+    }
+
+    .breathing-metric.warning {
+      --breath-color: var(--warning);
+      --breath-rgb: 245, 158, 11;
+    }
+
+    .breathing-metric.critical {
+      --breath-color: var(--danger);
+      --breath-rgb: 255, 46, 99;
+    }
+
+    .breathing-metric::before {
+      content: "";
+      position: absolute;
+      left: 16%;
+      right: 16%;
+      bottom: -14px;
+      height: 34px;
+      border-radius: 999px;
+      background: radial-gradient(circle, rgba(var(--breath-rgb), 0.55) 0%, rgba(var(--breath-rgb), 0.08) 45%, rgba(var(--breath-rgb), 0) 78%);
+      filter: blur(14px);
+      opacity: 0.7;
+      transform: scale(0.92);
+      transform-origin: center;
+      animation: breathe-panel 2.6s ease-in-out infinite;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .breathing-metric .data-label,
+    .breathing-metric .data-value {
+      position: relative;
+      z-index: 1;
+    }
+
+    .breathing-metric .data-label {
+      color: rgba(255, 255, 255, 0.82);
+    }
+
+    .data-value.remaining-breath {
+      display: inline-block;
+      min-height: 30px;
+      line-height: 1.1;
+      color: var(--breath-color);
+      text-shadow: 0 0 8px rgba(var(--breath-rgb), 0.28);
+      animation: breathe-number 2.6s ease-in-out infinite;
+      transform-origin: left center;
+      will-change: font-size, text-shadow, opacity;
+    }
 
     @keyframes breathe-number {
       0%, 100% {
         font-size: 18px;
-        opacity: 0.8;
-        text-shadow: 0 0 4px var(--success);
+        opacity: 0.9;
+        text-shadow: 0 0 8px rgba(var(--breath-rgb), 0.35);
       }
       50% {
-        font-size: 22px;
+        font-size: 24px;
         opacity: 1;
-        text-shadow: 0 0 12px var(--success), 0 0 24px var(--success);
+        text-shadow: 0 0 14px rgba(var(--breath-rgb), 0.9), 0 0 28px rgba(var(--breath-rgb), 0.5);
+      }
+    }
+
+    @keyframes breathe-panel {
+      0%, 100% {
+        opacity: 0.45;
+        transform: scale(0.92);
+      }
+      50% {
+        opacity: 0.92;
+        transform: scale(1.08);
       }
     }
 
@@ -1806,6 +1870,13 @@ function renderDetailsHtmlSkeleton(innerHtml: string): string {
     color: var(--text-dim);
     opacity: 0.3;
     font-size: 10px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .breathing-metric::before,
+    .data-value.remaining-breath {
+      animation: none;
+    }
   }
 </style>
 </head>
