@@ -975,11 +975,15 @@ function renderDetailsPanelHtml(): string {
           <div class="data-grid">
             <div class="data-item">
               <span class="data-label">${i18n.consumed}</span>
-              <span class="data-value highlight">${formatNumber(latestVm.usedCount)}</span>
+              <div class="flip-number" data-value="${formatNumber(latestVm.usedCount)}">
+                <span class="data-value highlight">${formatNumber(latestVm.usedCount)}</span>
+              </div>
             </div>
             <div class="data-item breathing-metric ${windowStatus}">
               <span class="data-label">${i18n.available}</span>
-              <span class="data-value success remaining-breath ${windowStatus}">${formatNumber(latestVm.remainingCount)}</span>
+              <div class="flip-number" data-value="${formatNumber(latestVm.remainingCount)}">
+                <span class="data-value success remaining-breath ${windowStatus}">${formatNumber(latestVm.remainingCount)}</span>
+              </div>
             </div>
             <div class="data-item">
               <span class="data-label">${i18n.limit}</span>
@@ -1015,11 +1019,15 @@ function renderDetailsPanelHtml(): string {
           <div class="data-grid">
             <div class="data-item">
               <span class="data-label">${i18n.used}</span>
-              <span class="data-value emphasize">${formatNumber(latestVm.weeklyUsedCount)}</span>
+              <div class="flip-number" data-value="${formatNumber(latestVm.weeklyUsedCount)}">
+                <span class="data-value emphasize">${formatNumber(latestVm.weeklyUsedCount)}</span>
+              </div>
             </div>
             <div class="data-item breathing-metric ${weeklyStatus}">
               <span class="data-label">${i18n.left}</span>
-              <span class="data-value success remaining-breath ${weeklyStatus}">${formatNumber(latestVm.weeklyRemainingCount)}</span>
+              <div class="flip-number" data-value="${formatNumber(latestVm.weeklyRemainingCount)}">
+                <span class="data-value success remaining-breath ${weeklyStatus}">${formatNumber(latestVm.weeklyRemainingCount)}</span>
+              </div>
             </div>
             <div class="data-item">
               <span class="data-label">${i18n.total}</span>
@@ -1362,6 +1370,40 @@ function renderDetailsHtmlSkeleton(innerHtml: string): string {
       animation: breathe-number 2.6s ease-in-out infinite;
       transform-origin: left center;
       will-change: font-size, text-shadow, opacity;
+    }
+
+    /* Flip Page Animation */
+    .flip-number {
+      position: relative;
+      perspective: 400px;
+      display: inline-block;
+    }
+
+    .flip-number.flipping .data-value {
+      animation: flipPage 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    @keyframes flipPage {
+      0% {
+        transform: rotateX(0deg) scale(1);
+        opacity: 1;
+      }
+      30% {
+        transform: rotateX(-90deg) scale(0.8);
+        opacity: 0;
+      }
+      31% {
+        transform: rotateX(90deg) scale(0.8);
+        opacity: 0;
+      }
+      60% {
+        transform: rotateX(-20deg) scale(1.05);
+        opacity: 1;
+      }
+      100% {
+        transform: rotateX(0deg) scale(1);
+        opacity: 1;
+      }
     }
 
     @keyframes breathe-number {
@@ -1937,6 +1979,31 @@ ${innerHtml}
         }
         updateCountdowns();
         setInterval(updateCountdowns, 1000);
+
+        // Flip page animation for value changes
+        function initFlipAnimation() {
+          const flipNumbers = document.querySelectorAll('.flip-number');
+          flipNumbers.forEach(function(el) {
+            el.dataset.lastValue = el.dataset.value || '';
+          });
+        }
+
+        function triggerFlipAnimation() {
+          const flipNumbers = document.querySelectorAll('.flip-number');
+          flipNumbers.forEach(function(el) {
+            const currentValue = el.dataset.value || '';
+            const lastValue = el.dataset.lastValue || '';
+            if (currentValue !== lastValue) {
+              el.classList.remove('flipping');
+              void el.offsetWidth; // Force reflow
+              el.classList.add('flipping');
+              el.dataset.lastValue = currentValue;
+            }
+          });
+        }
+
+        initFlipAnimation();
+        setTimeout(triggerFlipAnimation, 100);
 })();
 </script>
 </body>
