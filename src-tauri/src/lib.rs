@@ -76,13 +76,18 @@ pub fn run() {
                     match api::fetch_minimax_usage(&key, 15000).await {
                         Ok(data) => {
                             let state: tauri::State<AppState> = app_h.state();
-                            let mut usage = state.usage_data.lock().unwrap();
-                            *usage = Some(data.clone());
-                            tray::update_tray_menu(&app_h, &state);
-                            let _ = app_h.emit("usage-updated", data);
 
-                            // Check notification
-                            if let Some(percent) = state.usage_data.lock().unwrap().as_ref().and_then(|d| d.used_percent) {
+                            // Update usage data
+                            {
+                                let mut usage = state.usage_data.lock().unwrap();
+                                *usage = Some(data.clone());
+                            } // Lock released here
+
+                            tray::update_tray_menu(&app_h, &state);
+                            let _ = app_h.emit("usage-updated", data.clone());
+
+                            // Check notification using data directly (already owned)
+                            if let Some(percent) = data.used_percent {
                                 notifications::check_and_notify(&app_h, percent, 100.0 - percent);
                             }
                         }
