@@ -1,62 +1,121 @@
-# 项目当前工作状态 (AI 辅助)
+# CLAUDE.md
 
-## 2026-04-20
-- **完成任务**: 剩余量数字呼吸灯效果
-- **改动说明**:
-  - 为 `.data-value.success` 添加了 `breathe-number` 关键帧动画，实现字体大小从 18px 渐变至 22px，同时伴随发光强度变化。
-  - 根据使用率阈值（warning/critical）动态切换剩余量数字颜色（绿色 → 橙色 → 红色）。
-  - 同时影响当前周期和本周累计的剩余量显示。
-- **当前状态**: 已编译通过并提交。
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## 2026-04-16
-- **完成任务**: 升级版本到 0.0.7
-- **改动说明**:
-  - 在 `package.json` 中将 `version` 字段从 0.0.6 升级至 `0.0.7`。
-  - 使用 `npm run package` 成功构建输出了新版本的插件包 `minimax-usage-statusbar-0.0.7.vsix`。
-- **当前状态**: 已完成打包并提交。
+## 项目概述 (Project Overview)
 
-## 2026-04-16
-- **完成任务**: 修复 Linux 系统下加载 Webview 报错
-- **改动说明**:
-  - 在创建 `WebviewPanel` 时，显式配置 `enableScripts: false`。
-  - 在 Webview 生成的 HTML `<head>` 中增加了严格的安全策略（CSP）：`<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'none'; font-src 'none'; img-src 'none';">`，彻底避免 Chromium 底层因状态非法引发 ServiceWorker 注册异常报错。
-- **当前状态**: 已编译通过并提交至 Git。
+本仓库包含两个相关项目：
 
-## 2026-04-16
-- **完成任务**: Webview UI 深度优化 (防抖动、布局、国际化)
-- **改动说明**:
-  - **防抖动**: 移除了每次全量刷新 HTML 触发的 `animate-in` 入场动画，解决了页面自动刷新时一闪一闪的抖动问题。
-  - **水平布局**: 将 `.stats-container` 的 CSS Grid 布局从按宽度自适应 `auto-fit` 修改为强制 `1fr 1fr` 的水平双列布局（并在窄屏 `<768px` 时降级为单列），使得“当前周期”和“本周累计”卡片并排显示。
-  - **国际化 (i18n)**: 读取 `vscode.env.language`，提取了所有硬编码在 HTML 字符串中的文本到 `i18n` 字典对象中。默认展示**中文**，当检测到语言为 `en` 时自动切换为英文。
-- **当前状态**: 已完成改动、编译通过并进行独立提交。
+| 项目 | 路径 | 技术栈 |
+|------|------|--------|
+| VS Code 插件 | `src/`, `package.json` | TypeScript, VS Code API |
+| 独立桌面应用 | `src-tauri/`, `src-web/` | Rust (Tauri v2), HTML/CSS/JS |
 
-## 2026-04-16
-- **完成任务**: 修复插件打包报错 (Couldn't detect the repository)
-- **改动说明**: 
-  - 在 `package.json` 中的 `scripts` 下新增了 `package` 命令。
-  - 通过显式传入 `--baseContentUrl` 和 `--baseImagesUrl` 参数，解决了因使用了非公开或私有内网 Git 仓库（如 192.168.x.x）导致 VSCE 无法自动解析 `README.md` 图片相对路径的报错。
-- **当前状态**: 现已可以通过 `npm run package` 成功构建 `.vsix` 文件。
+当前开发重点在 **Tauri 独立桌面应用**，VS Code 插件功能已稳定。
 
-## 2026-04-16
-- **完成任务**: 实施 Vscode 插件界面改造方案
-- **改动说明**:
-  - **状态栏优化**: 统一了使用率的颜色阈值 (<70% 绿色, 70-90% 橙色, >90% 红色)。
-  - **风险感知层 (Risk Warning)**: 在 Webview 中增加高亮风险提示卡片。当额度使用达到 70% 时提醒消耗过快，达到 90% 时转为危险警告。
-  - **动态刷新与预警**: 当使用率超过 80% 时，自动将刷新间隔缩短为 10s；当剩余配额低于 5% (使用率 >= 95%) 时触发 VS Code 系统气泡强警告，且通过状态控制避免打扰。
-- **当前状态**: 改造方案中的核心需求已实施完毕并成功编译。
+---
 
-## 2026-04-16
-- **完成任务**: 修复插件图标 PNG 白边问题
-- **改动说明**:
-  - 从 `icon.svg` 删除了 1px 的极细半透明白色边框。
-  - 使用了 `npx sharp-cli@latest` 代替会产生自带白边文档相框的 macOS 原生工具（qlmanage），彻底重新渲染了完美的圆角深色 `icon.png`。
-- **当前状态**: 已生成干净无白边的最终版 PNG 并进行 Git 离线提交。
+## Tauri 桌面应用
 
-## 2026-04-16
-- **完成任务**: 设计并生成插件图标
-- **改动说明**: 
-  - 使用了匹配监控面板气质的深色系与发光质感 SVG 矢量图标，中心带有字母 M（指代 MiniMax）。
-  - 通过 `npx svgexport` 将 `icon.svg` 渲染成 256x256 的 `icon.png`。
-  - 修改 `package.json` 加入了 `"icon": "images/icon.png"` 字段。
-  - 更新了 `README.md`，在首行展示该图标。
-- **当前状态**: 已完成图标配置。仓库内 `src/extension.ts` 等仍包含用户尚未提交的工作，当前 AI 变动将以单独的离线 git commit 方式提交。
+### 技术栈
+
+- **后端**: Rust + Tauri v2
+- **前端**: 原生 HTML/CSS/JS (无框架，Cyberpunk 风格)
+- **状态管理**: `AppState` (Rust Mutex) + Tauri Events (frontend ↔ backend 通信)
+- **存储**: `keyring v3` (macOS Keychain) 存储 API Key，`dirs`  crate 存储配置文件
+- **插件**: `tauri-plugin-autostart`, `tauri-plugin-notification`, `tauri-plugin-shell`
+
+### 核心模块
+
+```
+src-tauri/src/
+├── lib.rs          # 应用入口，tauri::Builder 配置，setup 逻辑
+├── main.rs         # 入口点，调用 lib::run()
+├── commands.rs     # Tauri 命令 (cmd_* 前缀)，frontend 调用入口
+├── state.rs        # AppState, AppConfig, UsageData 结构体
+├── config.rs       # 配置文件加载/保存 (JSON)
+├── api.rs          # MiniMax API 请求逻辑
+├── api_key_store.rs # Keychain API Key 存储
+├── tray.rs         # 系统托盘菜单管理
+└── notifications.rs # 额度预警通知
+```
+
+### 前端文件
+
+```
+src-web/
+├── index.html  # 主界面布局
+├── styles.css # Cyberpunk 风格样式
+└── app.js     # Tauri API 调用，i18n
+```
+
+### 构建命令
+
+```bash
+# 开发模式运行 Tauri
+cd src-tauri && cargo tauri dev
+
+# Release 构建
+cd src-tauri && cargo tauri build
+
+# Tauri 应用签名打包 (macOS)
+# 需要配置 signing identity 在 tauri.conf.json
+```
+
+### 状态流向
+
+```
+Frontend (app.js) ←→ Tauri Commands (commands.rs) ←→ AppState (state.rs)
+                                                    ↓
+                                              各模块 (api, tray, config...)
+```
+
+### 关键设计
+
+- **窗口关闭行为**: 点击关闭按钮隐藏到托盘，而非退出应用
+- **首次运行**: 显示主窗口引导设置 API Key
+- **托盘菜单**: 动态更新显示使用率、剩余额度、模型信息
+- **语言**: 支持 zh-CN / en，自动检测系统语言
+
+---
+
+## VS Code 插件
+
+### 技术栈
+
+- **后端**: TypeScript
+- **前端**: VS Code Webview (原生 HTML/CSS)
+- **存储**: VS Code Secret Storage
+
+### 构建命令
+
+```bash
+# 编译 TypeScript
+npm run compile
+
+# 打包 VSIX
+npm run package
+```
+
+---
+
+## 通用配置
+
+### API Endpoint
+
+```
+GET https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains
+```
+
+### 配置文件位置
+
+- **macOS**: `~/Library/Application Support/com.decard.minimax-monitor/`
+- **Linux**: `~/.config/com.decard.minimax-monitor/`
+
+---
+
+## 最近开发 (2026-04)
+
+- **feature/standalone-app** 分支正在进行 Tauri 重构
+- 核心功能已完成并可运行
+- 正在完善: 开机启动、通知系统、托盘交互

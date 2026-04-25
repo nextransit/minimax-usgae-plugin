@@ -12,3 +12,5 @@ docs/Vscode*.md
 CLAUDE.md
 ISSUES.md
 docs/plans/
+.worktree/
+.env.github
