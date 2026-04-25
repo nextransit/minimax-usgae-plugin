@@ -1,6 +1,15 @@
 use crate::state::{AppConfig, AppState, UsageData};
-use tauri::{AppHandle, State, Manager};
-use keyring;
+use tauri::{AppHandle, State};
+use tauri_plugin_autostart::ManagerExt;
+
+#[tauri::command]
+pub fn cmd_debug_state(state: State<AppState>) -> String {
+    let api_key = state.api_key.lock().unwrap();
+    let has_key = api_key.is_some();
+    let key_len = api_key.as_ref().map(|k| k.len()).unwrap_or(0);
+    log::debug!("cmd_debug_state called, returning: has_api_key: {}, key_length: {}", has_key, key_len);
+    format!("has_api_key: {}, key_length: {}", has_key, key_len)
+}
 
 #[tauri::command]
 pub fn cmd_get_config(state: State<AppState>) -> AppConfig {
@@ -8,36 +17,47 @@ pub fn cmd_get_config(state: State<AppState>) -> AppConfig {
 }
 
 #[tauri::command]
-pub fn cmd_save_config(state: State<AppState>, config: AppConfig) -> Result<(), String> {
-    let mut current = state.config.lock().unwrap();
-    *current = config.clone();
-    crate::config::save_config(&config).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn cmd_get_api_key(state: State<AppState>) -> Option<String> {
-    state.api_key.lock().unwrap().clone()
-}
-
-#[tauri::command]
-pub fn cmd_set_api_key(state: State<AppState>, key: String) -> Result<(), String> {
-    let entry = keyring::Entry::new("minimax-usage-monitor", "api_key")
-        .map_err(|e| e.to_string())?;
-    entry.set_password(&key).map_err(|e| e.to_string())?;
-
-    let mut api_key = state.api_key.lock().unwrap();
-    *api_key = Some(key);
+pub fn cmd_save_config(app: AppHandle, state: State<AppState>, config: AppConfig) -> Result<(), String> {
+    {
+        let mut current = state.config.lock().unwrap();
+        *current = config.clone();
+    }
+    crate::config::save_config(&config).map_err(|e| e.to_string())?;
+    crate::tray::update_tray_menu(&app, &state);
     Ok(())
 }
 
 #[tauri::command]
-pub fn cmd_clear_api_key(state: State<AppState>) -> Result<(), String> {
-    if let Ok(entry) = keyring::Entry::new("minimax-usage-monitor", "api_key") {
-        let _ = entry.delete_credential();
-    }
+pub fn cmd_get_api_key(state: State<AppState>) -> Option<String> {
+    let key = state.api_key.lock().unwrap().clone();
+    log::debug!("cmd_get_api_key returning: {:?} (is_some: {})", key, key.is_some());
+    key
+}
+
+#[tauri::command]
+pub fn cmd_set_api_key(app: AppHandle, state: State<AppState>, key: String) -> Result<(), String> {
+    crate::api_key_store::save_api_key(&key)?;
 
     let mut api_key = state.api_key.lock().unwrap();
-    *api_key = None;
+    *api_key = Some(key);
+    drop(api_key);
+    crate::tray::update_tray_menu(&app, &state);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn cmd_clear_api_key(app: AppHandle, state: State<AppState>) -> Result<(), String> {
+    crate::api_key_store::clear_api_key()?;
+
+    {
+        let mut api_key = state.api_key.lock().unwrap();
+        *api_key = None;
+    }
+    {
+        let mut usage = state.usage_data.lock().unwrap();
+        *usage = None;
+    }
+    crate::tray::update_tray_menu(&app, &state);
     Ok(())
 }
 
@@ -49,22 +69,23 @@ pub async fn cmd_fetch_usage(api_key: String, timeout_ms: u64) -> Result<UsageDa
 }
 
 #[tauri::command]
-pub fn cmd_update_usage_data(state: State<AppState>, data: UsageData) {
-    let mut usage = state.usage_data.lock().unwrap();
-    *usage = Some(data);
+pub fn cmd_update_usage_data(app: AppHandle, state: State<AppState>, data: UsageData) {
+    {
+        let mut usage = state.usage_data.lock().unwrap();
+        *usage = Some(data);
+    }
+    crate::tray::update_tray_menu(&app, &state);
 }
 
 #[tauri::command]
 pub async fn cmd_get_autostart(app: AppHandle) -> Result<bool, String> {
-    app.autolaunch()
-        .map_err(|e| e.to_string())?
-        .is_enabled()
-        .map_err(|e| e.to_string())
+    let autolaunch = app.autolaunch();
+    autolaunch.is_enabled().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn cmd_set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
-    let autolaunch = app.autolaunch().map_err(|e| e.to_string())?;
+    let autolaunch = app.autolaunch();
     if enabled {
         autolaunch.enable().map_err(|e| e.to_string())?;
     } else {

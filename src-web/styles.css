@@ -283,6 +283,7 @@ body {
   line-height: 1.1;
   color: var(--breath-color);
   text-shadow: 0 0 8px rgba(var(--breath-rgb), 0.28);
+  font-size: 18px;
   animation: breathe-number 2.6s ease-in-out infinite;
   transform-origin: left center;
   will-change: font-size, text-shadow, opacity;
@@ -296,29 +297,34 @@ body {
 }
 
 .flip-number.flipping .data-value {
-  animation: flipPage 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+  animation: flipPage 2.0s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 @keyframes flipPage {
   0% {
     transform: rotateX(0deg) scale(1);
     opacity: 1;
+    font-size: 18px;
   }
   30% {
     transform: rotateX(-90deg) scale(0.8);
     opacity: 0;
+    font-size: 18px;
   }
   31% {
     transform: rotateX(90deg) scale(0.8);
     opacity: 0;
+    font-size: 18px;
   }
   60% {
     transform: rotateX(-20deg) scale(1.05);
     opacity: 1;
+    font-size: 18px;
   }
   100% {
     transform: rotateX(0deg) scale(1);
     opacity: 1;
+    font-size: 18px;
   }
 }
 

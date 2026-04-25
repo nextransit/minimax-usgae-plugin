@@ -1,10 +1,12 @@
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
+use tauri::tray::TrayIcon as TauriTrayIcon;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub refresh_interval_seconds: u32,
     pub show_weekly_in_status: bool,
+    pub show_percent_in_tray: bool,  // 新增：托盘栏显示当前周期比例
     pub detail_model_limit: u32,
     pub language: String,
     pub first_run: bool,               // 新增：首次运行标记
@@ -15,8 +17,9 @@ pub struct AppConfig {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            refresh_interval_seconds: 60,
+            refresh_interval_seconds: 20,
             show_weekly_in_status: true,
+            show_percent_in_tray: true,   // 默认开启
             detail_model_limit: 8,
             language: "auto".to_string(),
             first_run: true,           // 默认首次运行
@@ -62,4 +65,5 @@ pub struct AppState {
     pub config: Mutex<AppConfig>,
     pub api_key: Mutex<Option<String>>,
     pub usage_data: Mutex<Option<UsageData>>,
+    pub tray: Mutex<Option<TauriTrayIcon>>,
 }

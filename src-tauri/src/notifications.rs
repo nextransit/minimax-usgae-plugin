@@ -1,7 +1,9 @@
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
+use tauri_plugin_notification::NotificationExt;
 
 pub fn check_and_notify(app: &AppHandle, used_percent: f64, remaining_percent: f64) {
-    let config = app.state::<crate::state::AppState>().config.lock().unwrap();
+    let state = app.state::<crate::state::AppState>();
+    let config = state.config.lock().unwrap();
 
     if !config.enable_notifications {
         return;

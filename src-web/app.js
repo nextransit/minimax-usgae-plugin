@@ -1,23 +1,54 @@
 // MiniMax Usage Monitor - Tauri Frontend
-// Wait for Tauri API to be available
+console.log('[DEBUG] app.js script loaded');
+
+// Immediately hide the API key dialog on script load (belt and suspenders)
+(function() {
+    var dialog = document.getElementById('api-key-dialog');
+    if (dialog) {
+        dialog.style.display = 'none';
+        console.log('[DEBUG] Hidden api-key-dialog on load');
+    }
+})();
+
+// Global error handler
+window.onerror = function(msg, url, line, col, error) {
+    console.error('[GLOBAL ERROR]', msg, 'at line', line, 'col', col);
+    return false;
+};
+
+let tauriInvoke = null;
+let tauriListen = null;
+
 function getTauriAPI() {
-  if (typeof window.__TAURI__ === 'undefined') {
-    console.error('Tauri API not available');
+  const tauri = window.__TAURI__;
+  if (!tauri?.core?.invoke || !tauri?.event?.listen) {
     return null;
   }
   return {
-    invoke: window.__TAURI__.core?.invoke,
-    listen: window.__TAURI__.event?.listen
+    invoke: tauri.core.invoke,
+    listen: tauri.event.listen,
   };
+}
+
+async function waitForTauriAPI(timeoutMs = 5000) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const api = getTauriAPI();
+    if (api) return api;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error('Tauri API not available');
 }
 
 // i18n translations
 const i18n = {
   'zh-CN': {
     settings: '设置',
+    refreshInterval: '刷新时间（秒）',
     startMinimized: '启动时最小化到菜单栏',
     autoStart: '开机自动启动',
     enableNotifications: '启用系统通知',
+    showPercentInTray: '托盘栏显示使用比例',
     unconfiguredKey: '未配置加密密钥',
     unconfiguredDesc: '系统核心功能需要 MiniMax API Key 授权。请在控制台中输入您的访问密钥以同步数据。',
     initAccess: '配置密钥',
@@ -68,9 +99,11 @@ const i18n = {
   },
   en: {
     settings: 'Settings',
+    refreshInterval: 'Refresh interval (seconds)',
     startMinimized: 'Start minimized to menu bar',
     autoStart: 'Launch at login',
     enableNotifications: 'Enable system notifications',
+    showPercentInTray: 'Show usage percent in tray',
     unconfiguredKey: 'Unconfigured API Key',
     unconfiguredDesc: 'System core features require MiniMax API Key authorization. Please enter your access key to sync data.',
     initAccess: 'INITIALIZE ACCESS',
@@ -132,97 +165,139 @@ let state = {
 
 // Settings state
 let settings = {
+  refresh_interval_seconds: 20,
   start_minimized: false,
   autostart: false,
   enable_notifications: true,
+  show_percent_in_tray: true,
 };
 
 // Initialize app
 async function init() {
+  console.log('[DEBUG init] Function started');
   try {
+    console.log('[DEBUG init] Waiting for Tauri API...');
+    const tauri = await waitForTauriAPI();
+    console.log('[DEBUG init] Tauri API found');
+    tauriInvoke = tauri.invoke;
+    tauriListen = tauri.listen;
+
     // Load config
-    state.config = await invoke('cmd_get_config');
+    console.log('[DEBUG init] Loading config...');
+    state.config = await tauriInvoke('cmd_get_config');
     state.language = state.config?.language === 'auto' ? 'zh-CN' : (state.config?.language || 'zh-CN');
-    
+
     // Load API key
-    state.apiKey = await invoke('cmd_get_api_key');
-    
+    console.log('[DEBUG init] Loading API key...');
+    const fetchedApiKey = await tauriInvoke('cmd_get_api_key');
+    console.log('[DEBUG init] Got API key:', fetchedApiKey ? '***' + fetchedApiKey.slice(-8) : 'null');
+    state.apiKey = fetchedApiKey;
+
     // Apply i18n
+    console.log('[DEBUG init] Applying i18n...');
     applyI18n();
-    
+
     // Setup event listeners
+    console.log('[DEBUG init] Setting up event listeners...');
     await setupEventListeners();
-    
+
     // Setup UI event handlers
+    console.log('[DEBUG init] Setting up UI handlers...');
     setupUiHandlers();
-    
+
     // Initial render
+    console.log('[DEBUG init] Rendering...');
     render();
-    
+
     // Start countdown timer
+    console.log('[DEBUG init] Starting countdown timer...');
     startCountdownTimer();
 
     // Load settings
+    console.log('[DEBUG init] Loading settings...');
     await loadSettings();
+    restartAutoRefreshTimer();
 
     // If we have API key, fetch usage data
+    console.log('[DEBUG init] API key check:', !!state.apiKey);
     if (state.apiKey) {
+      console.log('[DEBUG init] Fetching usage data...');
       await refreshUsage();
     }
+    console.log('[DEBUG init] Done!');
   } catch (error) {
-    console.error('Init error:', error);
+    console.error('[DEBUG init] Error:', error);
+    showStartupError(error);
   }
 }
 
 async function setupEventListeners() {
+  if (!tauriListen) return;
+
   // Listen for usage updates from backend
-  await listen('usage-updated', (event) => {
+  await tauriListen('usage-updated', (event) => {
     state.usageData = event.payload;
     render();
   });
-  
+
   // Listen for show set key dialog event
-  await listen('show-set-key-dialog', () => {
-    showApiKeyDialog();
+  await tauriListen('show-set-key-dialog', () => {
+    // Disable auto modal popup from background events; user opens it explicitly from UI.
+    return;
   });
+}
+
+function showStartupError(error) {
+  const emptyNoKey = document.getElementById('empty-state-no-key');
+  const emptyLoading = document.getElementById('empty-state-loading');
+  const dashboard = document.getElementById('dashboard');
+  const emptyError = document.getElementById('empty-state-error');
+  const errorMsg = document.getElementById('error-message');
+
+  [emptyNoKey, emptyLoading, dashboard].forEach((el) => {
+    if (el) el.style.display = 'none';
+  });
+
+  if (emptyError) emptyError.style.display = 'block';
+  if (errorMsg) errorMsg.textContent = `Startup failed: ${String(error)}`;
 }
 
 function setupUiHandlers() {
   // Set API Key button
   document.getElementById('btn-set-key')?.addEventListener('click', showApiKeyDialog);
-  
+
   // Retry sync button
   document.getElementById('btn-retry-sync')?.addEventListener('click', refreshUsage);
-  
+
   // Reconnect button
   document.getElementById('btn-reconnect')?.addEventListener('click', refreshUsage);
-  
+
   // Edit key button
   document.getElementById('btn-edit-key')?.addEventListener('click', showApiKeyDialog);
-  
+
   // Refresh button
   document.getElementById('btn-refresh')?.addEventListener('click', refreshUsage);
-  
+
   // Config key button
   document.getElementById('btn-config-key')?.addEventListener('click', showApiKeyDialog);
-  
+
   // Clear cache button
   document.getElementById('btn-clear-cache')?.addEventListener('click', clearApiKey);
-  
+
   // Language toggle
   document.getElementById('langToggleBtn')?.addEventListener('click', toggleLanguage);
-  
+
   // Dialog cancel button
   document.getElementById('btn-cancel-key')?.addEventListener('click', hideApiKeyDialog);
-  
+
   // Dialog save button
   document.getElementById('btn-save-key')?.addEventListener('click', saveApiKey);
-  
+
   // Enter key in input
   document.getElementById('api-key-input')?.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') saveApiKey();
   });
-  
+
   // Close dialog on overlay click
   document.getElementById('api-key-dialog')?.addEventListener('click', (e) => {
     if (e.target.classList.contains('dialog-overlay')) {
@@ -232,14 +307,15 @@ function setupUiHandlers() {
 }
 
 async function refreshUsage() {
-  if (!state.apiKey || state.isLoading) return;
-  
+  if (!tauriInvoke || !state.apiKey || state.isLoading) return;
+
   state.isLoading = true;
   render();
-  
+
   try {
-    const data = await invoke('cmd_fetch_usage', { apiKey: state.apiKey, timeoutMs: 15000 });
+    const data = await tauriInvoke('cmd_fetch_usage', { apiKey: state.apiKey, timeoutMs: 15000 });
     state.usageData = data;
+    await tauriInvoke('cmd_update_usage_data', { data });
     render();
   } catch (error) {
     console.error('Fetch error:', error);
@@ -253,14 +329,15 @@ async function refreshUsage() {
 async function saveApiKey() {
   const input = document.getElementById('api-key-input');
   const apiKey = input?.value?.trim();
-  
+
   if (!apiKey) {
     return;
   }
-  
+
   try {
-    await invoke('cmd_set_api_key', { key: apiKey });
+    await tauriInvoke('cmd_set_api_key', { key: apiKey });
     state.apiKey = apiKey;
+    restartAutoRefreshTimer();
     hideApiKeyDialog();
     render();
     await refreshUsage();
@@ -270,10 +347,13 @@ async function saveApiKey() {
 }
 
 async function clearApiKey() {
+  if (!tauriInvoke) return;
+
   try {
-    await invoke('cmd_clear_api_key');
+    await tauriInvoke('cmd_clear_api_key');
     state.apiKey = null;
     state.usageData = null;
+    restartAutoRefreshTimer();
     render();
   } catch (error) {
     console.error('Clear API key error:', error);
@@ -300,46 +380,71 @@ function hideApiKeyDialog() {
 }
 
 async function toggleLanguage() {
+  if (!tauriInvoke) return;
+
   state.language = state.language === 'zh-CN' ? 'en' : 'zh-CN';
-  
+
   // Save preference
   try {
     const newConfig = { ...state.config, language: state.language };
-    await invoke('cmd_save_config', { config: newConfig });
+    await tauriInvoke('cmd_save_config', { config: newConfig });
     state.config = newConfig;
   } catch (error) {
     console.error('Save language error:', error);
   }
-  
+
   applyI18n();
   render();
 }
 
 async function loadSettings() {
+  if (!tauriInvoke) return;
+
   try {
-    const config = await invoke('cmd_get_config');
+    const config = await tauriInvoke('cmd_get_config');
+    settings.refresh_interval_seconds = normalizeRefreshIntervalSeconds(config.refresh_interval_seconds);
     settings.start_minimized = config.start_minimized || false;
     settings.enable_notifications = config.enable_notifications !== false;
+    settings.show_percent_in_tray = config.show_percent_in_tray !== false;
 
     // Load autostart status
-    settings.autostart = await invoke('cmd_get_autostart');
+    settings.autostart = await tauriInvoke('cmd_get_autostart');
 
     // Update UI
-    document.getElementById('setting-start-minimized').checked = settings.start_minimized;
-    document.getElementById('setting-autostart').checked = settings.autostart;
-    document.getElementById('setting-notifications').checked = settings.enable_notifications;
+    const startMinimizedEl = document.getElementById('setting-start-minimized');
+    const autostartEl = document.getElementById('setting-autostart');
+    const notificationsEl = document.getElementById('setting-notifications');
+    const showPercentInTrayEl = document.getElementById('setting-show-percent-in-tray');
+    const refreshIntervalEl = document.getElementById('setting-refresh-interval');
+
+    if (refreshIntervalEl) refreshIntervalEl.value = String(settings.refresh_interval_seconds);
+    if (startMinimizedEl) startMinimizedEl.checked = settings.start_minimized;
+    if (autostartEl) autostartEl.checked = settings.autostart;
+    if (notificationsEl) notificationsEl.checked = settings.enable_notifications;
+    if (showPercentInTrayEl) showPercentInTrayEl.checked = settings.show_percent_in_tray;
 
     // Add event listeners
-    document.getElementById('setting-start-minimized').addEventListener('change', (e) => {
+    startMinimizedEl?.addEventListener('change', (e) => {
       saveSetting('start_minimized', e.target.checked);
     });
 
-    document.getElementById('setting-autostart').addEventListener('change', (e) => {
+    autostartEl?.addEventListener('change', (e) => {
       saveAutostart(e.target.checked);
     });
 
-    document.getElementById('setting-notifications').addEventListener('change', (e) => {
+    notificationsEl?.addEventListener('change', (e) => {
       saveSetting('enable_notifications', e.target.checked);
+    });
+
+    showPercentInTrayEl?.addEventListener('change', (e) => {
+      saveSetting('show_percent_in_tray', e.target.checked);
+    });
+
+    refreshIntervalEl?.addEventListener('change', async (e) => {
+      const normalized = normalizeRefreshIntervalSeconds(e.target.value);
+      e.target.value = String(normalized);
+      await saveSetting('refresh_interval_seconds', normalized);
+      restartAutoRefreshTimer();
     });
   } catch (error) {
     console.error('Load settings error:', error);
@@ -347,24 +452,35 @@ async function loadSettings() {
 }
 
 async function saveSetting(key, value) {
+  if (!tauriInvoke) return;
+
   try {
-    const config = await invoke('cmd_get_config');
+    const config = await tauriInvoke('cmd_get_config');
     config[key] = value;
-    await invoke('cmd_save_config', { config });
+    await tauriInvoke('cmd_save_config', { config });
     settings[key] = value;
   } catch (error) {
     console.error('Save setting error:', error);
   }
 }
 
+function normalizeRefreshIntervalSeconds(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 20;
+  return Math.min(3600, Math.max(5, Math.round(parsed)));
+}
+
 async function saveAutostart(enabled) {
+  if (!tauriInvoke) return;
+
   try {
-    await invoke('cmd_set_autostart', { enabled });
+    await tauriInvoke('cmd_set_autostart', { enabled });
     settings.autostart = enabled;
   } catch (error) {
     console.error('Save autostart error:', error);
     // Revert UI state
-    document.getElementById('setting-autostart').checked = !enabled;
+    const autostartEl = document.getElementById('setting-autostart');
+    if (autostartEl) autostartEl.checked = !enabled;
   }
 }
 
@@ -377,39 +493,45 @@ function applyI18n() {
     const key = el.getAttribute('data-i18n');
     el.textContent = t(key);
   });
-  
+
   // Update active language indicator
   const langZh = document.getElementById('lang-zh');
   const langEn = document.getElementById('lang-en');
   if (langZh) langZh.classList.toggle('active', state.language === 'zh-CN');
   if (langEn) langEn.classList.toggle('active', state.language === 'en');
-  
+
   // Update document lang
   document.documentElement.lang = state.language === 'zh-CN' ? 'zh-CN' : 'en';
 }
 
 function render() {
+  console.log('[DEBUG render] state.apiKey:', state.apiKey ? '***' + state.apiKey.slice(-8) : 'null');
+
   const emptyNoKey = document.getElementById('empty-state-no-key');
   const emptyLoading = document.getElementById('empty-state-loading');
   const emptyError = document.getElementById('empty-state-error');
   const dashboard = document.getElementById('dashboard');
-  
+  const apiKeyDialog = document.getElementById('api-key-dialog');
+
   // Hide all states
-  [emptyNoKey, emptyLoading, emptyError, dashboard].forEach(el => {
+  [emptyNoKey, emptyLoading, emptyError, dashboard, apiKeyDialog].forEach(el => {
     if (el) el.style.display = 'none';
   });
-  
+
   if (!state.apiKey) {
+    console.log('[DEBUG render] Showing empty-state-no-key');
     if (emptyNoKey) emptyNoKey.style.display = 'block';
     return;
   }
-  
+
   if (state.isLoading && !state.usageData) {
+    console.log('[DEBUG render] Showing empty-state-loading');
     if (emptyLoading) emptyLoading.style.display = 'block';
     return;
   }
-  
+
   if (state.usageData && !state.usageData.ok) {
+    console.log('[DEBUG render] Showing empty-state-error');
     if (emptyError) {
       emptyError.style.display = 'block';
       const errorMsg = document.getElementById('error-message');
@@ -417,13 +539,15 @@ function render() {
     }
     return;
   }
-  
+
   if (!state.usageData) {
+    console.log('[DEBUG render] Showing empty-state-loading (no data)');
     if (emptyLoading) emptyLoading.style.display = 'block';
     return;
   }
-  
+
   // Render dashboard
+  console.log('[DEBUG render] Showing dashboard');
   if (dashboard) dashboard.style.display = 'block';
   renderDashboard();
 }
@@ -431,45 +555,45 @@ function render() {
 function renderDashboard() {
   const data = state.usageData;
   if (!data || !data.ok) return;
-  
+
   // Header info
   setText('primary-model', data.primary_model_name || t('unknown'));
   setText('interval-label', data.interval_label || t('na'));
-  
+
   // Current interval
   const currentPercent = clampPercent(data.used_percent);
   const currentStatus = getStatus(currentPercent);
-  
+
   setText('current-used', formatNumber(data.used_count));
-  setText('current-remaining', formatNumber(data.remaining_count));
+  setFlipNumber('current-remaining-container', 'current-remaining', formatNumber(data.remaining_count));
   setText('current-total', formatNumber(data.total_count));
   setText('current-percent', `${Math.round(currentPercent)}%`);
-  
+
   updateProgressBar('current-card', 'current-progress', currentPercent, currentStatus);
   updateRemainingBreath('current-remaining', 'current-remaining-wrapper', currentStatus);
-  
+
   if (data.reset_timestamp) {
     const timerEl = document.getElementById('window-countdown');
     if (timerEl) timerEl.setAttribute('data-timestamp', String(data.reset_timestamp));
   }
-  
+
   // Weekly interval
   const weeklyPercent = clampPercent(data.weekly_used_percent);
   const weeklyStatus = getStatus(weeklyPercent);
-  
+
   setText('weekly-used', formatNumber(data.weekly_used_count));
-  setText('weekly-remaining', formatNumber(data.weekly_remaining_count));
+  setFlipNumber('weekly-remaining-container', 'weekly-remaining', formatNumber(data.weekly_remaining_count));
   setText('weekly-total', formatNumber(data.weekly_total_count));
   setText('weekly-percent', `${Math.round(weeklyPercent)}%`);
-  
+
   updateProgressBar('weekly-card', 'weekly-progress', weeklyPercent, weeklyStatus);
   updateRemainingBreath('weekly-remaining', 'weekly-remaining-wrapper', weeklyStatus);
-  
+
   if (data.weekly_reset_timestamp) {
     const timerEl = document.getElementById('weekly-countdown');
     if (timerEl) timerEl.setAttribute('data-timestamp', String(data.weekly_reset_timestamp));
   }
-  
+
   // Risk alert
   const riskCard = document.getElementById('risk-alert-card');
   if (currentPercent >= 70) {
@@ -488,10 +612,10 @@ function renderDashboard() {
   } else {
     if (riskCard) riskCard.style.display = 'none';
   }
-  
+
   // Model details
   renderModelDetails(data);
-  
+
   // Last updated
   setText('last-updated', data.last_updated || t('na'));
 }
@@ -499,14 +623,14 @@ function renderDashboard() {
 function renderModelDetails(data) {
   const tbody = document.getElementById('model-table-body');
   if (!tbody) return;
-  
+
   const modelLimit = Math.min(state.config?.detail_model_limit || 8, data.models?.length || 0);
-  
+
   if (!data.models || data.models.length === 0) {
     tbody.innerHTML = `<tr><td colspan="5" class="model-details-empty">${t('perModelEmpty')}</td></tr>`;
     return;
   }
-  
+
   const rows = data.models.slice(0, modelLimit).map(model => `
     <tr>
       <td class="model-cell" title="${escapeHtml(model.name)}">${escapeHtml(model.name)}</td>
@@ -516,15 +640,15 @@ function renderModelDetails(data) {
       <td class="window-cell">${escapeHtml(model.time_window || '00:00 ~ 00:00')}</td>
     </tr>
   `).join('');
-  
+
   tbody.innerHTML = rows;
-  
+
   // Update badge
   const badge = document.getElementById('model-count-badge');
   if (badge) {
     badge.textContent = `${t('topItems')} ${modelLimit} ${t('itemsSuffix')}`;
   }
-  
+
   // Update timestamp
   const updated = document.getElementById('model-updated');
   if (updated) {
@@ -535,7 +659,7 @@ function renderModelDetails(data) {
 function updateProgressBar(cardId, progressId, percent, status) {
   const card = document.getElementById(cardId);
   const progress = document.getElementById(progressId);
-  
+
   if (card) card.className = `cyber-card ${status}`;
   if (progress) {
     progress.style.width = `${percent}%`;
@@ -546,13 +670,48 @@ function updateProgressBar(cardId, progressId, percent, status) {
 function updateRemainingBreath(valueId, wrapperId, status) {
   const valueEl = document.getElementById(valueId);
   const wrapper = document.getElementById(wrapperId);
-  
+
   if (valueEl) {
     valueEl.className = `data-value success remaining-breath ${status}`;
   }
   if (wrapper) {
     wrapper.className = `data-item breathing-metric ${status}`;
   }
+}
+
+const flipTimers = new WeakMap();
+
+function setFlipNumber(containerId, valueId, nextValue) {
+  const valueEl = document.getElementById(valueId);
+  if (!valueEl) return;
+
+  const container = document.getElementById(containerId);
+  const next = String(nextValue);
+
+  if (!container) {
+    valueEl.textContent = next;
+    return;
+  }
+
+  const previous = container.dataset.value;
+  const changed = previous !== next;
+  container.dataset.value = next;
+
+  if (!changed) return;
+
+  valueEl.textContent = next;
+  if (!previous) return;
+
+  container.classList.remove('flipping');
+  void container.offsetWidth;
+  container.classList.add('flipping');
+
+  const timer = flipTimers.get(container);
+  if (timer) clearTimeout(timer);
+  const cleanupTimer = setTimeout(() => {
+    container.classList.remove('flipping');
+  }, 2020);
+  flipTimers.set(container, cleanupTimer);
 }
 
 function setText(id, value) {
@@ -587,6 +746,7 @@ function escapeHtml(value) {
 }
 
 let countdownInterval = null;
+let autoRefreshInterval = null;
 
 function startCountdownTimer() {
   if (countdownInterval) clearInterval(countdownInterval);
@@ -600,18 +760,58 @@ function startCountdownTimer() {
   }, 1000);
 }
 
+function restartAutoRefreshTimer() {
+  if (autoRefreshInterval) {
+    clearInterval(autoRefreshInterval);
+    autoRefreshInterval = null;
+  }
+
+  if (!state.apiKey) return;
+
+  const intervalSeconds = normalizeRefreshIntervalSeconds(settings.refresh_interval_seconds);
+  autoRefreshInterval = setInterval(() => {
+    refreshUsage();
+  }, intervalSeconds * 1000);
+}
+
 function formatCountdown(timestamp) {
   if (!timestamp || timestamp <= 0) return '--:--:--';
   const now = Date.now();
   const diff = timestamp - now;
   if (diff <= 0) return '00:00:00';
-  
+
   const h = Math.floor(diff / 3600000);
   const m = Math.floor((diff % 3600000) / 60000);
   const s = Math.floor((diff % 60000) / 1000);
-  
+
   return [h, m, s].map((v) => String(v).padStart(2, '0')).join(':');
 }
 
 // Initialize on DOM ready
-document.addEventListener('DOMContentLoaded', init);
+console.log('[DEBUG] readyState:', document.readyState);
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+} else {
+    console.log('[DEBUG] DOM already loaded, calling init directly');
+    init();
+}
+
+// Global error handler
+window.onerror = function(msg, url, line, col, error) {
+    console.error('[GLOBAL ERROR]', msg, 'at line', line, 'col', col);
+    return false;
+};
+
+// Ping test
+setInterval(async () => {
+    if (window.__TAURI__) {
+        try {
+            const result = await window.__TAURI__.core.invoke('cmd_debug_state');
+            console.log('[PING]', result);
+        } catch (e) {
+            console.log('[PING ERROR]', e);
+        }
+    } else {
+        console.log('[PING] Tauri not ready');
+    }
+}, 5000);
