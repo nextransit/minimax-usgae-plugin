@@ -22,7 +22,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **后端**: Rust + Tauri v2
 - **前端**: 原生 HTML/CSS/JS (无框架，Cyberpunk 风格)
 - **状态管理**: `AppState` (Rust Mutex) + Tauri Events (frontend ↔ backend 通信)
-- **存储**: `keyring v3` (macOS Keychain) 存储 API Key，`dirs`  crate 存储配置文件
+- **存储**: `keyring v3` native backends (macOS Keychain / Linux Secret Service / Windows Credential Manager) 存储 API Key，`dirs` crate 存储配置文件并保留 fallback 文件
 - **插件**: `tauri-plugin-autostart`, `tauri-plugin-notification`, `tauri-plugin-shell`
 
 ### 核心模块
@@ -53,13 +53,13 @@ src-web/
 
 ```bash
 # 开发模式运行 Tauri
-cd src-tauri && cargo tauri dev
+npm run tauri:dev
 
 # Release 构建
-cd src-tauri && cargo tauri build
+npm run tauri:build
 
-# Tauri 应用签名打包 (macOS)
-# 需要配置 signing identity 在 tauri.conf.json
+# CI/unsigned release 构建
+npm run tauri:build:ci
 ```
 
 ### 状态流向
@@ -109,13 +109,13 @@ GET https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains
 
 ### 配置文件位置
 
-- **macOS**: `~/Library/Application Support/com.decard.minimax-monitor/`
-- **Linux**: `~/.config/com.decard.minimax-monitor/`
+- **macOS**: `~/Library/Application Support/minimax-usage-monitor/`
+- **Linux**: `~/.config/minimax-usage-monitor/`
+- **Windows**: `%APPDATA%\\minimax-usage-monitor\\`
 
 ---
 
 ## 最近开发 (2026-04)
 
-- **feature/standalone-app** 分支正在进行 Tauri 重构
 - 核心功能已完成并可运行
-- 正在完善: 开机启动、通知系统、托盘交互
+- 正在完善: macOS/Linux/Windows 跨平台打包与 CI artifacts

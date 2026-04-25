@@ -20,14 +20,7 @@ fn keychain_disabled() -> bool {
             || normalized == "on";
     }
 
-    #[cfg(target_os = "macos")]
-    {
-        true
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        false
-    }
+    false
 }
 
 fn primary_service() -> String {

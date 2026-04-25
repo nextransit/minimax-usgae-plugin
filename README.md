@@ -52,6 +52,24 @@
 3. 打包完成后，在该目录下会生成一个 `minimax-usage-statusbar-x.x.x.vsix` 文件。
 4. **手动安装**：在 VS Code 插件面板点击 `...` -> `Install from VSIX...`，选择该文件即可。
 
+## 独立桌面应用
+
+仓库同时包含 Tauri 独立桌面应用：
+
+- 后端：`src-tauri/`
+- 前端：`src-web/`
+- 跨平台构建说明：`docs/desktop-cross-platform-build.md`
+
+常用命令：
+
+```bash
+npm ci
+npm run tauri:dev
+npm run tauri:build
+```
+
+GitHub Actions 会在 macOS、Linux、Windows 三个平台分别构建桌面安装包，并上传 workflow artifacts。
+
 ## 配置项
 
 - `minimaxUsage.refreshIntervalSeconds`: 自动刷新间隔（秒）
