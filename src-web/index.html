@@ -207,8 +207,10 @@ body {
 .data-item {
   display: flex;
   flex-direction: column;
+  justify-content: center;
   gap: 4px;
   position: relative;
+  min-height: 54px;
 }
 
 .data-label {
@@ -276,8 +278,7 @@ body {
 }
 
 .data-value.remaining-breath {
-  display: inline-block;
-  min-height: 30px;
+  display: block;
   line-height: 1.1;
   color: var(--breath-color);
   text-shadow: 0 0 8px rgba(var(--breath-rgb), 0.28);
