@@ -1053,3 +1053,29 @@ body {
 .setting-item:hover .setting-label {
   color: var(--text-bright);
 }
+
+.setting-select {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.55);
+  background: rgba(15, 23, 42, 0.75);
+  color: var(--text-bright);
+  font-size: 13px;
+  font-weight: 700;
+  font-family: inherit;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  min-width: 160px;
+  appearance: auto;
+}
+
+.setting-select:focus {
+  border-color: rgba(0, 212, 255, 0.78);
+  box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.18);
+}
+
+.setting-select option {
+  background: #0f172a;
+  color: var(--text-bright);
+}

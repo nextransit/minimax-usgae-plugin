@@ -12,6 +12,7 @@ pub struct AppConfig {
     pub first_run: bool,               // 新增：首次运行标记
     pub start_minimized: bool,         // 新增：启动时最小化
     pub enable_notifications: bool,    // 新增：启用通知
+    pub tray_icon_style: String,       // 新增：托盘图标风格
 }
 
 impl Default for AppConfig {
@@ -25,6 +26,7 @@ impl Default for AppConfig {
             first_run: true,           // 默认首次运行
             start_minimized: false,
             enable_notifications: true,
+            tray_icon_style: "default".to_string(),
         }
     }
 }
