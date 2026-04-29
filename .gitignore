@@ -15,3 +15,5 @@ docs/plans/
 .worktree/
 .env.github
 src-tauri/target/
+docs/superpowers/
+docs/plans/.worktrees/
