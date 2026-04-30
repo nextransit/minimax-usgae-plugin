@@ -30,6 +30,7 @@ keyring = { version = "3", default-features = false, features = [
   "crypto-rust"
 ] }
 dirs = "5"
+uuid = { version = "1", features = ["v4"] }
 tauri-plugin-autostart = "2"
 tauri-plugin-notification = "2"
 
