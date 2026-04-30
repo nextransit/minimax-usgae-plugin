@@ -207,13 +207,9 @@ pub fn run() {
                 // 禁用 WebKitGTK 硬件加速防止白屏
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.with_webview(|webview| {
-                        use webkit2gtk::{WebViewExt, SettingsExt};
+                        use webkit2gtk::{WebViewExt, SettingsExt, HardwareAccelerationPolicy};
                         if let Some(settings) = webview.settings() {
-                            #[cfg(feature = "webkit2gtk_v2_16")]
-                            {
-                                use webkit2gtk::HardwareAccelerationPolicy;
-                                SettingsExt::set_hardware_acceleration_policy(&settings, HardwareAccelerationPolicy::Never);
-                            }
+                            SettingsExt::set_hardware_acceleration_policy(&settings, HardwareAccelerationPolicy::Never);
                         }
                     });
 
