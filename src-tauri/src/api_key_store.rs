@@ -1,3 +1,4 @@
+use crate::state::ApiKeyEntry;
 use keyring::Error as KeyringError;
 use std::fs;
 use std::io::ErrorKind;
@@ -132,6 +133,22 @@ fn write_fallback_key(key: &str) -> Result<(), String> {
         use std::os::unix::fs::PermissionsExt;
         let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
     }
+    #[cfg(windows)]
+    {
+        let _ = hide_file_on_windows(&path);
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn hide_file_on_windows(path: &std::path::Path) -> Result<(), String> {
+    let path_str = path.to_string_lossy();
+    if !path_str.is_empty() {
+        std::process::Command::new("attrib")
+            .args(["+H", &path_str])
+            .output()
+            .map_err(|e| format!("attrib failed: {}", e))?;
+    }
     Ok(())
 }
 
@@ -234,6 +251,57 @@ pub fn clear_api_key() -> Result<(), String> {
         Ok(())
     } else {
         Err(errors.join("; "))
+    }
+}
+
+/// Save an API key for a specific key entry
+pub fn save_key_for_entry(entry: &ApiKeyEntry, key: &str) -> Result<(), String> {
+    if keychain_disabled() {
+        // Fallback: save to file with key-specific path
+        let path = config_dir()?.join(format!("key_{}.fallback", entry.id));
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        fs::write(&path, key).map_err(|e| e.to_string())?;
+        Ok(())
+    } else {
+        let entry = keyring::Entry::new(&entry.keychain_service, &entry.keychain_account)
+            .map_err(|e| e.to_string())?;
+        entry.set_password(key).map_err(|e| e.to_string())
+    }
+}
+
+/// Load an API key for a specific key entry
+pub fn load_key_for_entry(entry: &ApiKeyEntry) -> Option<String> {
+    if keychain_disabled() {
+        let path = config_dir()
+            .ok()?
+            .join(format!("key_{}.fallback", entry.id));
+        fs::read_to_string(path).ok()?.trim().to_string().into()
+    } else {
+        let entry = keyring::Entry::new(&entry.keychain_service, &entry.keychain_account)
+            .ok()?;
+        entry.get_password().ok()
+    }
+}
+
+/// Delete an API key for a specific key entry
+pub fn delete_key_for_entry(entry: &ApiKeyEntry) -> Result<(), String> {
+    if keychain_disabled() {
+        let path = config_dir()?.join(format!("key_{}.fallback", entry.id));
+        match fs::remove_file(path) {
+            Ok(_) => Ok(()),
+            Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e.to_string()),
+        }
+    } else {
+        let entry = keyring::Entry::new(&entry.keychain_service, &entry.keychain_account)
+            .map_err(|e| e.to_string())?;
+        match entry.delete_credential() {
+            Ok(_) => Ok(()),
+            Err(KeyringError::NoEntry) => Ok(()),
+            Err(e) => Err(e.to_string()),
+        }
     }
 }
 
