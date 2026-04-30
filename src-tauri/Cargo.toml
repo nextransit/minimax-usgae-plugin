@@ -14,7 +14,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri = { version = "2", features = ["tray-icon", "image-ico", "image-png"] }
 tauri-plugin-shell = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -37,6 +37,18 @@ tauri-plugin-notification = "2"
 objc2 = "0.6.4"
 objc2-foundation = "0.3.2"
 objc2-app-kit = "0.3.2"
+
+# Windows 专用依赖
+[target.'cfg(target_os = "windows")'.dependencies]
+winreg = "0.55"
+
+# Linux 专用依赖
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = { version = "2", features = ["v2_16"] }
+
+# 三平台通用桌面依赖
+[target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
+tauri-plugin-single-instance = "2"
 
 [profile.release]
 panic = "abort"

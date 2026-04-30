@@ -6,6 +6,9 @@ mod notifications;
 mod state;
 mod tray;
 
+#[cfg(target_os = "linux")]
+mod linux_fix;
+
 use tauri::{Emitter, Manager};
 
 pub use state::{AppConfig, AppState, UsageData, ModelDetail};
@@ -16,6 +19,8 @@ pub use commands::*;
 const FRONTEND_HTML: &str = include_str!("../../src-web/index.html");
 const FRONTEND_CSS: &str = include_str!("../../src-web/styles.css");
 const FRONTEND_JS: &str = include_str!("../../src-web/app.js");
+const API_FETCH_TIMEOUT_MS: u64 = 15_000;
+const MIN_REFRESH_INTERVAL_SECONDS: u64 = 5;
 
 // Use frontend resources to prevent unused warnings
 fn _use_frontend_resources() {
@@ -24,17 +29,101 @@ fn _use_frontend_resources() {
     println!("Frontend JS length: {}", FRONTEND_JS.len());
 }
 
+fn init_logging() {
+    let mut builder =
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"));
+
+    #[cfg(not(debug_assertions))]
+    {
+        if let Some(log_dir) = dirs::data_local_dir()
+            .or_else(dirs::config_dir)
+            .map(|path| path.join("minimax-usage-monitor"))
+        {
+            if let Err(e) = std::fs::create_dir_all(&log_dir) {
+                eprintln!("Failed to create log directory {}: {}", log_dir.display(), e);
+            } else if let Ok(file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(log_dir.join("app.log"))
+            {
+                builder.target(env_logger::Target::Pipe(Box::new(file)));
+            }
+        }
+    }
+
+    let _ = builder.try_init();
+}
+
+async fn refresh_usage_data(app_h: &tauri::AppHandle, key: String, reason: &'static str) {
+    log::info!("Fetching usage data ({})", reason);
+    match api::fetch_minimax_usage(&key, API_FETCH_TIMEOUT_MS).await {
+        Ok(data) => {
+            let state: tauri::State<AppState> = app_h.state();
+
+            {
+                let mut usage = state.usage_data.lock().unwrap();
+                *usage = Some(data.clone());
+            }
+
+            tray::update_tray_menu(app_h, &state);
+            let _ = app_h.emit("usage-updated", data.clone());
+
+            if let Some(percent) = data.used_percent {
+                notifications::check_and_notify(app_h, percent, 100.0 - percent);
+            }
+        }
+        Err(e) => {
+            log::error!("Usage fetch failed ({}): {}", reason, e);
+        }
+    }
+}
+
+fn spawn_usage_refresh_loop(app_h: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        loop {
+            let interval_seconds = {
+                let state: tauri::State<AppState> = app_h.state();
+                let config = state.config.lock().unwrap();
+                u64::from(config.refresh_interval_seconds).max(MIN_REFRESH_INTERVAL_SECONDS)
+            };
+
+            tokio::time::sleep(std::time::Duration::from_secs(interval_seconds)).await;
+
+            let api_key = {
+                let state: tauri::State<AppState> = app_h.state();
+                let api_key = state.api_key.lock().unwrap();
+                api_key.clone()
+            };
+
+            if let Some(key) = api_key {
+                refresh_usage_data(&app_h, key, "scheduled").await;
+            }
+        }
+    });
+}
+
 pub fn run() {
-    // Log frontend resource sizes to verify they are embedded
-    log::info!("Frontend resources: HTML {} bytes, CSS {} bytes, JS {} bytes",
-        FRONTEND_HTML.len(), FRONTEND_CSS.len(), FRONTEND_JS.len());
-
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    init_logging();
     log::info!("Starting MiniMax Usage Monitor");
+    log::info!(
+        "Frontend resources: HTML {} bytes, CSS {} bytes, JS {} bytes",
+        FRONTEND_HTML.len(),
+        FRONTEND_CSS.len(),
+        FRONTEND_JS.len()
+    );
 
+    log::info!("Loading config");
     let saved_config = config::load_config().unwrap_or_default();
+    log::info!(
+        "Config loaded: first_run={}, start_minimized={}, show_percent_in_tray={}",
+        saved_config.first_run,
+        saved_config.start_minimized,
+        saved_config.show_percent_in_tray
+    );
 
+    log::info!("Loading API key");
     let saved_api_key = api_key_store::load_api_key();
+    log::info!("API key loaded: {}", saved_api_key.is_some());
 
     // Copy config values for use in closure (since we move saved_config into app_state)
     let first_run = saved_config.first_run;
@@ -48,17 +137,34 @@ pub fn run() {
         tray: std::sync::Mutex::new(None),
     };
 
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec!["--minimized"]),
         ))
         .plugin(tauri_plugin_notification::init())
-        .manage(app_state)
+        .manage(app_state);
+
+    // Single-instance 插件仅在桌面平台启用
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            log::info!("Another instance launched with args: {:?}", args);
+            // 如果已有实例运行，显示主窗口
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }));
+    }
+
+    builder
         .setup(move |app| {
             // Setup tray icon
+            log::info!("Setting up tray");
             tray::setup_tray(app)?;
+            log::info!("Tray setup complete");
 
             // Handle window close event - hide instead of quit
             let app_handle = app.handle().clone();
@@ -95,32 +201,41 @@ pub fn run() {
                 }
             }
 
+            // Linux 特定初始化
+            #[cfg(target_os = "linux")]
+            {
+                // 禁用 WebKitGTK 硬件加速防止白屏
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.with_webview(|webview| {
+                        use webkit2gtk::{WebViewExt, SettingsExt};
+                        if let Some(settings) = webview.settings() {
+                            #[cfg(feature = "webkit2gtk_v2_16")]
+                            {
+                                use webkit2gtk::HardwareAccelerationPolicy;
+                                SettingsExt::set_hardware_acceleration_policy(&settings, HardwareAccelerationPolicy::Never);
+                            }
+                        }
+                    });
+
+                    // 应用窗口 focus 修复
+                    linux_fix::nudge_main_window(window.clone());
+                }
+
+                // 注册深链接处理器
+                if linux_fix::should_register_deep_link(app) {
+                    if let Err(e) = linux_fix::register_deep_link_handler(app) {
+                        log::warn!("Failed to register deep link handler: {}", e);
+                    }
+                }
+            }
+
+            spawn_usage_refresh_loop(app_handle.clone());
+
             // Initial data fetch if API key exists
             if let Some(key) = api_key_for_fetch {
                 let app_h = app_handle.clone();
                 tauri::async_runtime::spawn(async move {
-                    match api::fetch_minimax_usage(&key, 15000).await {
-                        Ok(data) => {
-                            let state: tauri::State<AppState> = app_h.state();
-
-                            // Update usage data
-                            {
-                                let mut usage = state.usage_data.lock().unwrap();
-                                *usage = Some(data.clone());
-                            } // Lock released here
-
-                            tray::update_tray_menu(&app_h, &state);
-                            let _ = app_h.emit("usage-updated", data.clone());
-
-                            // Check notification using data directly (already owned)
-                            if let Some(percent) = data.used_percent {
-                                notifications::check_and_notify(&app_h, percent, 100.0 - percent);
-                            }
-                        }
-                        Err(e) => {
-                            log::error!("Initial fetch failed: {}", e);
-                        }
-                    }
+                    refresh_usage_data(&app_h, key, "initial").await;
                 });
             }
 
