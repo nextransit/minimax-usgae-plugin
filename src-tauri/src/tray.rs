@@ -66,7 +66,7 @@ fn render_m_icon() -> Image<'static> {
 }
 
 #[cfg(target_os = "macos")]
-fn set_tray_title_with_color(tray: &TrayIcon, title: Option<&str>) {
+fn set_tray_title_with_color(app: &AppHandle, tray: &TrayIcon, title: Option<&str>) {
     let Some(title) = title else {
         let _ = tray.set_title(Option::<&str>::None);
         return;
@@ -74,12 +74,30 @@ fn set_tray_title_with_color(tray: &TrayIcon, title: Option<&str>) {
 
     // 先走标准 title，随后用 attributedTitle 覆盖，实现更好的数字稳定与视觉对齐。
     let _ = tray.set_title(Some(title));
-    set_macos_attributed_tray_title(tray, title);
+    set_macos_attributed_tray_title_async(app, tray.clone(), title.to_string());
+}
+
+// 异步执行 with_inner_tray_icon，避免阻塞主线程导致死锁
+#[cfg(target_os = "macos")]
+fn set_macos_attributed_tray_title_async(_app: &AppHandle, tray: TrayIcon, title: String) {
+    tauri::async_runtime::spawn(async move {
+        // 使用 tokio 的超时避免永久阻塞
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            tokio::task::spawn_blocking(move || {
+                set_macos_attributed_tray_title_sync(&tray, title);
+            })
+        ).await;
+
+        if result.is_err() {
+            log::warn!("set_macos_attributed_tray_title timed out");
+        }
+    });
 }
 
 #[cfg(target_os = "macos")]
-fn set_macos_attributed_tray_title(tray: &TrayIcon, title: &str) {
-    let title_string = title.to_string();
+fn set_macos_attributed_tray_title_sync(tray: &TrayIcon, title: String) {
+    let title_string = title;
     let _ = tray.with_inner_tray_icon(move |inner| {
         let Some(status_item) = inner.ns_status_item() else {
             return;
@@ -112,9 +130,159 @@ fn set_macos_attributed_tray_title(tray: &TrayIcon, title: &str) {
     });
 }
 
-#[cfg(not(target_os = "macos"))]
-fn set_tray_title_with_color(_tray: &TrayIcon, title: Option<&str>) {
+#[cfg(target_os = "windows")]
+fn set_tray_title_with_color(_app: &AppHandle, tray: &TrayIcon, title: Option<&str>) {
+    let status = title.unwrap_or("MM");
+    let tooltip = if status == "MM" {
+        "MiniMax Monitor".to_string()
+    } else {
+        format!("MiniMax Monitor: {}", status)
+    };
+
+    let _ = tray.set_title(title);
+    let _ = tray.set_tooltip(Some(tooltip));
+    if let Err(e) = tray.set_icon(Some(render_windows_status_icon(status))) {
+        log::error!("Failed to update Windows tray status icon: {}", e);
+    }
+}
+
+#[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+fn set_tray_title_with_color(_app: &AppHandle, _tray: &TrayIcon, title: Option<&str>) {
     let _ = _tray.set_title(title);
+}
+
+#[cfg(target_os = "windows")]
+fn render_windows_status_icon(status: &str) -> Image<'static> {
+    const W: u32 = 32;
+    const H: u32 = 32;
+    let percent = parse_current_percent(status);
+    let mut rgba = vec![0u8; (W * H * 4) as usize];
+    let bg = percent
+        .map(status_color)
+        .unwrap_or((0, 191, 255));
+
+    for y in 0..H {
+        for x in 0..W {
+            let dx = x as i32 - 16;
+            let dy = y as i32 - 16;
+            if dx * dx + dy * dy <= 15 * 15 {
+                draw_px(&mut rgba, W, x, y, bg.0, bg.1, bg.2, 255);
+            } else if dx * dx + dy * dy <= 16 * 16 {
+                draw_px(&mut rgba, W, x, y, 5, 10, 18, 220);
+            }
+        }
+    }
+
+    let label = percent
+        .map(|p| p.to_string())
+        .unwrap_or_else(|| "M".to_string());
+    draw_centered_label(&mut rgba, W, H, &label);
+
+    Image::new_owned(rgba, W, H)
+}
+
+#[cfg(target_os = "windows")]
+fn parse_current_percent(status: &str) -> Option<u8> {
+    let number = status
+        .split('%')
+        .next()
+        .unwrap_or_default()
+        .chars()
+        .filter(|ch| ch.is_ascii_digit())
+        .collect::<String>();
+    if number.is_empty() {
+        return None;
+    }
+    number.parse::<u8>().ok().map(|value| value.min(100))
+}
+
+#[cfg(target_os = "windows")]
+fn status_color(percent: u8) -> (u8, u8, u8) {
+    match percent {
+        90..=100 => (255, 46, 99),
+        70..=89 => (245, 158, 11),
+        _ => (0, 191, 255),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn draw_centered_label(rgba: &mut [u8], width: u32, height: u32, label: &str) {
+    let chars = label.chars().collect::<Vec<_>>();
+    let scale = match chars.len() {
+        0 | 1 => 5,
+        2 => 4,
+        _ => 3,
+    };
+    let glyph_w = 3 * scale;
+    let glyph_h = 5 * scale;
+    let gap = scale;
+    let text_w = chars.len() as u32 * glyph_w + chars.len().saturating_sub(1) as u32 * gap;
+    let start_x = width.saturating_sub(text_w) / 2;
+    let start_y = height.saturating_sub(glyph_h) / 2;
+
+    for (idx, ch) in chars.iter().enumerate() {
+        let x = start_x + idx as u32 * (glyph_w + gap);
+        draw_glyph(rgba, width, x, start_y, *ch, scale);
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn draw_glyph(rgba: &mut [u8], width: u32, x: u32, y: u32, ch: char, scale: u32) {
+    let Some(rows) = glyph_rows(ch) else {
+        return;
+    };
+
+    for (row_idx, row) in rows.iter().enumerate() {
+        for (col_idx, px) in row.as_bytes().iter().enumerate() {
+            if *px != b'1' {
+                continue;
+            }
+            for sy in 0..scale {
+                for sx in 0..scale {
+                    draw_px(
+                        rgba,
+                        width,
+                        x + col_idx as u32 * scale + sx,
+                        y + row_idx as u32 * scale + sy,
+                        255,
+                        255,
+                        255,
+                        255,
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn glyph_rows(ch: char) -> Option<[&'static str; 5]> {
+    match ch {
+        '0' => Some(["111", "101", "101", "101", "111"]),
+        '1' => Some(["010", "110", "010", "010", "111"]),
+        '2' => Some(["111", "001", "111", "100", "111"]),
+        '3' => Some(["111", "001", "111", "001", "111"]),
+        '4' => Some(["101", "101", "111", "001", "001"]),
+        '5' => Some(["111", "100", "111", "001", "111"]),
+        '6' => Some(["111", "100", "111", "101", "111"]),
+        '7' => Some(["111", "001", "010", "010", "010"]),
+        '8' => Some(["111", "101", "111", "101", "111"]),
+        '9' => Some(["111", "101", "111", "001", "111"]),
+        'M' | 'm' => Some(["101", "111", "111", "101", "101"]),
+        _ => None,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn draw_px(rgba: &mut [u8], width: u32, x: u32, y: u32, r: u8, g: u8, b: u8, a: u8) {
+    let idx = ((y * width + x) * 4) as usize;
+    if idx + 3 >= rgba.len() {
+        return;
+    }
+    rgba[idx] = r;
+    rgba[idx + 1] = g;
+    rgba[idx + 2] = b;
+    rgba[idx + 3] = a;
 }
 
 struct TrayI18n {
@@ -188,7 +356,7 @@ pub fn build_status_text(usage: &UsageData, show_percent: bool) -> String {
     }
 
     format_tray_usage(usage.used_percent, usage.weekly_used_percent)
-        .unwrap_or_else(|| "%--/%--".to_string())
+        .unwrap_or_else(|| "--%/--%".to_string())
 }
 
 fn format_percent(percent: Option<f64>) -> Option<String> {
@@ -196,16 +364,16 @@ fn format_percent(percent: Option<f64>) -> Option<String> {
 }
 
 fn format_compact_percent(percent: Option<f64>) -> Option<String> {
-    // compact macOS status metric style: %3 / %68
+    // compact macOS status metric style: 3% / 68%
     // keep token count minimal for quick-glance recognition.
-    format_percent(percent).map(|p| format!("%{}", p))
+    format_percent(percent).map(|p| format!("{}%", p))
 }
 
 fn format_tray_usage(current_percent: Option<f64>, weekly_percent: Option<f64>) -> Option<String> {
     match (format_compact_percent(current_percent), format_compact_percent(weekly_percent)) {
         (Some(current), Some(weekly)) => Some(format!("{}/{}", current, weekly)),
-        (Some(current), None) => Some(format!("{}/%--", current)),
-        (None, Some(weekly)) => Some(format!("%--/{}", weekly)),
+        (Some(current), None) => Some(format!("{}/--%", current)),
+        (None, Some(weekly)) => Some(format!("--%/{}", weekly)),
         (None, None) => None,
     }
 }
@@ -215,7 +383,14 @@ fn resolve_tray_icon(_app: &tauri::App) -> Option<Image<'static>> {
     Some(render_m_icon())
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+fn resolve_tray_icon(_app: &tauri::App) -> Option<Image<'static>> {
+    Image::from_bytes(include_bytes!("../icons/icon.ico"))
+        .or_else(|_| Image::from_bytes(include_bytes!("../icons/32x32.png")))
+        .ok()
+}
+
+#[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
 fn resolve_tray_icon(app: &tauri::App) -> Option<Image<'static>> {
     if let Some(icon) = app.default_window_icon() {
         return Some(icon.clone().to_owned());
@@ -344,21 +519,26 @@ pub fn update_tray_menu(app: &AppHandle, state: &AppState) {
     let menu = Menu::with_items(app, &items.iter().map(|i| i.as_ref()).collect::<Vec<_>>())
         .unwrap();
 
-    if let Some(tray) = state.tray.lock().unwrap().as_ref() {
-        let tray_title = if config.show_percent_in_tray {
-            usage
-                .as_ref()
-                .and_then(|data| format_tray_usage(data.used_percent, data.weekly_used_percent))
-                .unwrap_or_else(|| "MM".to_string())
-        } else {
-            "MM".to_string()
-        };
+    // 使用 try_lock 避免死锁，如果锁被占用则跳过托盘更新
+    let tray_title = if config.show_percent_in_tray {
+        usage
+            .as_ref()
+            .and_then(|data| format_tray_usage(data.used_percent, data.weekly_used_percent))
+            .unwrap_or_else(|| "MM".to_string())
+    } else {
+        "MM".to_string()
+    };
 
-        set_tray_title_with_color(tray, Some(&tray_title));
+    if let Ok(tray_guard) = state.tray.try_lock() {
+        if let Some(tray) = tray_guard.as_ref() {
+            set_tray_title_with_color(app, tray, Some(&tray_title));
 
-        if let Err(e) = tray.set_menu(Some(menu)) {
-            log::error!("Failed to update tray menu: {}", e);
+            if let Err(e) = tray.set_menu(Some(menu)) {
+                log::error!("Failed to update tray menu: {}", e);
+            }
         }
+    } else {
+        log::warn!("update_tray_menu: tray lock busy, skipping");
     }
 }
 
@@ -397,6 +577,8 @@ pub fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 
     if let Some(icon) = resolve_tray_icon(app) {
         tray_builder = tray_builder.icon(icon);
+    } else {
+        log::error!("Failed to resolve tray icon");
     }
 
     #[cfg(target_os = "macos")]
@@ -488,9 +670,56 @@ pub fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
             }
         })
         .build(app)?;
+    log::info!("Tray icon created");
 
     *state.tray.lock().unwrap() = Some(tray);
     update_tray_menu(&app_handle, &state);
+    log::info!("Tray menu initialized");
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_status_text;
+    use crate::{ModelDetail, UsageData};
+
+    fn usage_with_percent(current: Option<f64>, weekly: Option<f64>) -> UsageData {
+        UsageData {
+            ok: true,
+            status_label: "Success".to_string(),
+            primary_model_name: "MiniMax".to_string(),
+            time_window: String::new(),
+            reset_timestamp: None,
+            reset_in_label: String::new(),
+            total_count: None,
+            remaining_count: None,
+            used_count: None,
+            used_percent: current,
+            weekly_total_count: None,
+            weekly_used_count: None,
+            weekly_remaining_count: None,
+            weekly_used_percent: weekly,
+            weekly_reset_timestamp: None,
+            weekly_reset_in_label: String::new(),
+            interval_label: String::new(),
+            models: Vec::<ModelDetail>::new(),
+            last_updated: String::new(),
+        }
+    }
+
+    #[test]
+    fn status_text_places_percent_sign_after_numbers() {
+        let usage = usage_with_percent(Some(58.0), Some(36.0));
+        assert_eq!(build_status_text(&usage, true), "58%/36%");
+    }
+
+    #[test]
+    fn status_text_keeps_percent_suffix_for_missing_values() {
+        let usage = usage_with_percent(Some(58.0), None);
+        assert_eq!(build_status_text(&usage, true), "58%/--%");
+
+        let usage = usage_with_percent(None, Some(36.0));
+        assert_eq!(build_status_text(&usage, true), "--%/36%");
+    }
 }
