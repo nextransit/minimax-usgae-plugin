@@ -96,6 +96,11 @@ const i18n = {
     save: '保存',
     na: '--',
     unknown: '未知',
+    keyManagement: 'API Key 管理',
+    keyName: '名称',
+    keyColor: '颜色',
+    keyRefresh: '刷新间隔（秒）',
+    apiKey: 'API Key',
   },
   en: {
     settings: 'Settings',
@@ -151,13 +156,18 @@ const i18n = {
     save: 'Save',
     na: '--',
     unknown: 'Unknown',
+    keyManagement: 'API Key Management',
+    keyName: 'Name',
+    keyColor: 'Color',
+    keyRefresh: 'Refresh Interval (seconds)',
+    apiKey: 'API Key',
   },
 };
 
 // App State
 let state = {
-  apiKey: null,
-  usageData: null,
+  apiKeys: [],
+  usageData: {},
   config: null,
   language: 'zh-CN',
   isLoading: false,
@@ -187,11 +197,21 @@ async function init() {
     state.config = await tauriInvoke('cmd_get_config');
     state.language = state.config?.language === 'auto' ? 'zh-CN' : (state.config?.language || 'zh-CN');
 
-    // Load API key
-    console.log('[DEBUG init] Loading API key...');
-    const fetchedApiKey = await tauriInvoke('cmd_get_api_key');
-    console.log('[DEBUG init] Got API key:', fetchedApiKey ? '***' + fetchedApiKey.slice(-8) : 'null');
-    state.apiKey = fetchedApiKey;
+    // Load API keys (multi-key support)
+    console.log('[DEBUG init] Loading API keys...');
+    const fetchedApiKeys = await tauriInvoke('cmd_get_api_keys');
+    console.log('[DEBUG init] Got API keys:', fetchedApiKeys ? fetchedApiKeys.length + ' keys' : 'null');
+    state.apiKeys = fetchedApiKeys || [];
+
+    // Load all usage data
+    console.log('[DEBUG init] Loading usage data...');
+    try {
+      const allData = await tauriInvoke('cmd_get_all_usage_data');
+      state.usageData = allData || {};
+    } catch (e) {
+      console.log('[DEBUG init] No usage data yet:', e);
+      state.usageData = {};
+    }
 
     // Apply i18n
     console.log('[DEBUG init] Applying i18n...');
@@ -218,11 +238,11 @@ async function init() {
     await loadSettings();
     restartAutoRefreshTimer();
 
-    // If we have API key, fetch usage data
-    console.log('[DEBUG init] API key check:', !!state.apiKey);
-    if (state.apiKey) {
+    // If we have API keys, fetch usage data for all
+    console.log('[DEBUG init] API keys check:', state.apiKeys.length);
+    if (state.apiKeys.length > 0) {
       console.log('[DEBUG init] Fetching usage data...');
-      await refreshUsage();
+      await refreshAllUsage();
     }
     console.log('[DEBUG init] Done!');
   } catch (error) {
@@ -234,9 +254,16 @@ async function init() {
 async function setupEventListeners() {
   if (!tauriListen) return;
 
-  // Listen for usage updates from backend
+  // Listen for usage updates from backend (multi-key format)
   await tauriListen('usage-updated', (event) => {
-    state.usageData = event.payload;
+    const payload = event.payload;
+    if (payload && payload.keyId) {
+      // Multi-key format: payload.keyId -> usage data
+      state.usageData[payload.keyId] = payload.data;
+    } else if (payload && typeof payload === 'object' && !payload.keyId) {
+      // Legacy single-key format
+      state.usageData['default'] = payload;
+    }
     render();
   });
 
@@ -267,19 +294,19 @@ function setupUiHandlers() {
   document.getElementById('btn-set-key')?.addEventListener('click', showApiKeyDialog);
 
   // Retry sync button
-  document.getElementById('btn-retry-sync')?.addEventListener('click', refreshUsage);
+  document.getElementById('btn-retry-sync')?.addEventListener('click', refreshAllUsage);
 
   // Reconnect button
-  document.getElementById('btn-reconnect')?.addEventListener('click', refreshUsage);
+  document.getElementById('btn-reconnect')?.addEventListener('click', refreshAllUsage);
 
   // Edit key button
   document.getElementById('btn-edit-key')?.addEventListener('click', showApiKeyDialog);
 
   // Refresh button
-  document.getElementById('btn-refresh')?.addEventListener('click', refreshUsage);
+  document.getElementById('btn-refresh')?.addEventListener('click', refreshAllUsage);
 
   // Config key button
-  document.getElementById('btn-config-key')?.addEventListener('click', showApiKeyDialog);
+  document.getElementById('btn-config-key')?.addEventListener('click', showKeyManagementModal);
 
   // Clear cache button
   document.getElementById('btn-clear-cache')?.addEventListener('click', clearApiKey);
@@ -304,22 +331,41 @@ function setupUiHandlers() {
       hideApiKeyDialog();
     }
   });
+
+  // Key management modal handlers
+  document.getElementById('btn-add-key-modal')?.addEventListener('click', () => openKeyEditDialog());
+  document.getElementById('btn-save-key-edit')?.addEventListener('click', saveKeyEdit);
+  document.getElementById('btn-cancel-key-edit')?.addEventListener('click', closeKeyEditDialog);
+  document.getElementById('btn-close-modal')?.addEventListener('click', () => {
+    document.getElementById('key-management-modal').style.display = 'none';
+  });
+
+  // Key edit dialog overlay click
+  document.getElementById('key-edit-dialog')?.addEventListener('click', (e) => {
+    if (e.target.classList.contains('dialog-overlay')) {
+      closeKeyEditDialog();
+    }
+  });
 }
 
-async function refreshUsage() {
-  if (!tauriInvoke || !state.apiKey || state.isLoading) return;
+async function refreshAllUsage() {
+  if (!tauriInvoke || state.apiKeys.length === 0 || state.isLoading) return;
 
   state.isLoading = true;
   render();
 
   try {
-    const data = await tauriInvoke('cmd_fetch_usage', { apiKey: state.apiKey, timeoutMs: 15000 });
-    state.usageData = data;
-    await tauriInvoke('cmd_update_usage_data', { data });
+    // Fetch usage data for all keys
+    const allData = await tauriInvoke('cmd_get_all_usage_data');
+    state.usageData = allData || {};
+    await tauriInvoke('cmd_update_usage_data', { data: state.usageData });
     render();
   } catch (error) {
     console.error('Fetch error:', error);
-    state.usageData = { ok: false, status_label: String(error) };
+    // Mark all keys as error state
+    state.apiKeys.forEach(key => {
+      state.usageData[key.id] = { ok: false, status_label: String(error) };
+    });
     render();
   } finally {
     state.isLoading = false;
@@ -335,12 +381,16 @@ async function saveApiKey() {
   }
 
   try {
-    await tauriInvoke('cmd_set_api_key', { key: apiKey });
-    state.apiKey = apiKey;
-    restartAutoRefreshTimer();
+    // Use cmd_add_api_key for multi-key support
+    await tauriInvoke('cmd_add_api_key', {
+      name: 'Key ' + (state.apiKeys.length + 1),
+      color: '#00d4ff',
+      apiKey: apiKey,
+      refreshInterval: settings.refresh_interval_seconds || 20
+    });
     hideApiKeyDialog();
-    render();
-    await refreshUsage();
+    await loadApiKeys();
+    await refreshAllUsage();
   } catch (error) {
     console.error('Save API key error:', error);
   }
@@ -349,11 +399,15 @@ async function saveApiKey() {
 async function clearApiKey() {
   if (!tauriInvoke) return;
 
+  if (!confirm(state.language === 'zh-CN' ? 'Clear all API keys and data?' : 'Clear all API keys and data?')) return;
+
   try {
-    await tauriInvoke('cmd_clear_api_key');
-    state.apiKey = null;
-    state.usageData = null;
-    restartAutoRefreshTimer();
+    // Delete all keys
+    for (const key of state.apiKeys) {
+      await tauriInvoke('cmd_delete_api_key', { id: key.id });
+    }
+    state.apiKeys = [];
+    state.usageData = {};
     render();
   } catch (error) {
     console.error('Clear API key error:', error);
@@ -505,7 +559,7 @@ function applyI18n() {
 }
 
 function render() {
-  console.log('[DEBUG render] state.apiKey:', state.apiKey ? '***' + state.apiKey.slice(-8) : 'null');
+  console.log('[DEBUG render] state.apiKeys:', state.apiKeys.length);
 
   const emptyNoKey = document.getElementById('empty-state-no-key');
   const emptyLoading = document.getElementById('empty-state-loading');
@@ -518,31 +572,35 @@ function render() {
     if (el) el.style.display = 'none';
   });
 
-  if (!state.apiKey) {
+  if (state.apiKeys.length === 0) {
     console.log('[DEBUG render] Showing empty-state-no-key');
     if (emptyNoKey) emptyNoKey.style.display = 'block';
     return;
   }
 
-  if (state.isLoading && !state.usageData) {
+  if (state.isLoading && Object.keys(state.usageData).length === 0) {
     console.log('[DEBUG render] Showing empty-state-loading');
     if (emptyLoading) emptyLoading.style.display = 'block';
     return;
   }
 
-  if (state.usageData && !state.usageData.ok) {
+  // Check if all keys have errors
+  const allHaveError = state.apiKeys.every(key => {
+    const data = state.usageData[key.id];
+    return data && !data.ok;
+  });
+
+  if (allHaveError && state.apiKeys.length > 0) {
     console.log('[DEBUG render] Showing empty-state-error');
     if (emptyError) {
       emptyError.style.display = 'block';
       const errorMsg = document.getElementById('error-message');
-      if (errorMsg) errorMsg.textContent = state.usageData.status_label || 'Unknown error';
+      if (errorMsg) {
+        // Show error from first key
+        const firstKeyData = state.usageData[state.apiKeys[0].id];
+        errorMsg.textContent = firstKeyData?.status_label || 'Unknown error';
+      }
     }
-    return;
-  }
-
-  if (!state.usageData) {
-    console.log('[DEBUG render] Showing empty-state-loading (no data)');
-    if (emptyLoading) emptyLoading.style.display = 'block';
     return;
   }
 
@@ -553,50 +611,103 @@ function render() {
 }
 
 function renderDashboard() {
-  const data = state.usageData;
-  if (!data || !data.ok) return;
+  // Calculate aggregate data from all keys
+  let totalUsed = 0, totalRemaining = 0, totalCount = 0;
+  let hasData = false;
+  let primaryModelName = '';
+  let intervalLabel = '';
+
+  state.apiKeys.forEach(key => {
+    const data = state.usageData[key.id];
+    if (data && data.ok) {
+      hasData = true;
+      totalUsed += data.used_count || 0;
+      totalRemaining += data.remaining_count || 0;
+      totalCount += data.total_count || 0;
+      if (!primaryModelName && data.primary_model_name) {
+        primaryModelName = data.primary_model_name;
+        intervalLabel = data.interval_label || '';
+      }
+    }
+  });
 
   // Header info
-  setText('primary-model', data.primary_model_name || t('unknown'));
-  setText('interval-label', data.interval_label || t('na'));
+  setText('primary-model', primaryModelName || t('unknown'));
+  setText('interval-label', intervalLabel || t('na'));
 
-  // Current interval
-  const currentPercent = clampPercent(data.used_percent);
+  // Current interval aggregate
+  const currentPercent = totalCount > 0 ? (totalUsed / totalCount) * 100 : 0;
   const currentStatus = getStatus(currentPercent);
 
-  setText('current-used', formatNumber(data.used_count));
-  setFlipNumber('current-remaining-container', 'current-remaining', formatNumber(data.remaining_count));
-  setText('current-total', formatNumber(data.total_count));
+  setText('current-used', formatNumber(totalUsed));
+  setFlipNumber('current-remaining-container', 'current-remaining', formatNumber(totalRemaining));
+  setText('current-total', formatNumber(totalCount));
   setText('current-percent', `${Math.round(currentPercent)}%`);
 
   updateProgressBar('current-card', 'current-progress', currentPercent, currentStatus);
   updateRemainingBreath('current-remaining', 'current-remaining-wrapper', currentStatus);
 
-  if (data.reset_timestamp) {
+  // Find earliest reset timestamp
+  let earliestReset = 0;
+  state.apiKeys.forEach(key => {
+    const data = state.usageData[key.id];
+    if (data && data.reset_timestamp && (earliestReset === 0 || data.reset_timestamp < earliestReset)) {
+      earliestReset = data.reset_timestamp;
+    }
+  });
+  if (earliestReset > 0) {
     const timerEl = document.getElementById('window-countdown');
-    if (timerEl) timerEl.setAttribute('data-timestamp', String(data.reset_timestamp));
+    if (timerEl) timerEl.setAttribute('data-timestamp', String(earliestReset));
   }
 
-  // Weekly interval
-  const weeklyPercent = clampPercent(data.weekly_used_percent);
-  const weeklyStatus = getStatus(weeklyPercent);
+  // Weekly interval aggregate (use first key's weekly data for now)
+  let weeklyUsed = 0, weeklyRemaining = 0, weeklyTotal = 0;
+  let weeklyPercent = 0;
+  let weeklyStatus = 'normal';
 
-  setText('weekly-used', formatNumber(data.weekly_used_count));
-  setFlipNumber('weekly-remaining-container', 'weekly-remaining', formatNumber(data.weekly_remaining_count));
-  setText('weekly-total', formatNumber(data.weekly_total_count));
+  state.apiKeys.forEach(key => {
+    const data = state.usageData[key.id];
+    if (data && data.ok) {
+      weeklyUsed += data.weekly_used_count || 0;
+      weeklyRemaining += data.weekly_remaining_count || 0;
+      weeklyTotal += data.weekly_total_count || 0;
+    }
+  });
+
+  if (weeklyTotal > 0) {
+    weeklyPercent = (weeklyUsed / weeklyTotal) * 100;
+    weeklyStatus = getStatus(weeklyPercent);
+  }
+
+  setText('weekly-used', formatNumber(weeklyUsed));
+  setFlipNumber('weekly-remaining-container', 'weekly-remaining', formatNumber(weeklyRemaining));
+  setText('weekly-total', formatNumber(weeklyTotal));
   setText('weekly-percent', `${Math.round(weeklyPercent)}%`);
 
   updateProgressBar('weekly-card', 'weekly-progress', weeklyPercent, weeklyStatus);
   updateRemainingBreath('weekly-remaining', 'weekly-remaining-wrapper', weeklyStatus);
 
-  if (data.weekly_reset_timestamp) {
+  // Find earliest weekly reset
+  let earliestWeeklyReset = 0;
+  state.apiKeys.forEach(key => {
+    const data = state.usageData[key.id];
+    if (data && data.weekly_reset_timestamp && (earliestWeeklyReset === 0 || data.weekly_reset_timestamp < earliestWeeklyReset)) {
+      earliestWeeklyReset = data.weekly_reset_timestamp;
+    }
+  });
+  if (earliestWeeklyReset > 0) {
     const timerEl = document.getElementById('weekly-countdown');
-    if (timerEl) timerEl.setAttribute('data-timestamp', String(data.weekly_reset_timestamp));
+    if (timerEl) timerEl.setAttribute('data-timestamp', String(earliestWeeklyReset));
   }
 
-  // Risk alert
+  // Risk alert - show if any key is at risk
   const riskCard = document.getElementById('risk-alert-card');
-  if (currentPercent >= 70) {
+  const anyKeyAtRisk = state.apiKeys.some(key => {
+    const data = state.usageData[key.id];
+    return data && data.used_percent >= 70;
+  });
+
+  if (anyKeyAtRisk) {
     if (riskCard) {
       riskCard.style.display = 'flex';
       riskCard.className = `cyber-card risk-alert ${currentStatus}`;
@@ -613,23 +724,36 @@ function renderDashboard() {
     if (riskCard) riskCard.style.display = 'none';
   }
 
-  // Model details
-  renderModelDetails(data);
+  // Model details - combine from all keys (take first key's models for now)
+  const firstKeyWithData = state.apiKeys.find(key => {
+    const data = state.usageData[key.id];
+    return data && data.ok && data.models && data.models.length > 0;
+  });
+  if (firstKeyWithData) {
+    renderModelDetails(state.usageData[firstKeyWithData.id]);
+  } else {
+    renderModelDetails(null);
+  }
 
-  // Last updated
-  setText('last-updated', data.last_updated || t('na'));
+  // Last updated - use first key's timestamp
+  const firstKeyData = state.apiKeys.length > 0 ? state.usageData[state.apiKeys[0].id] : null;
+  setText('last-updated', firstKeyData?.last_updated || t('na'));
 }
 
 function renderModelDetails(data) {
   const tbody = document.getElementById('model-table-body');
   if (!tbody) return;
 
-  const modelLimit = Math.min(state.config?.detail_model_limit || 8, data.models?.length || 0);
-
-  if (!data.models || data.models.length === 0) {
+  if (!data || !data.models || data.models.length === 0) {
     tbody.innerHTML = `<tr><td colspan="5" class="model-details-empty">${t('perModelEmpty')}</td></tr>`;
+    const badge = document.getElementById('model-count-badge');
+    if (badge) {
+      badge.textContent = `${t('topItems')} 0 ${t('itemsSuffix')}`;
+    }
     return;
   }
+
+  const modelLimit = Math.min(state.config?.detail_model_limit || 8, data.models.length);
 
   const rows = data.models.slice(0, modelLimit).map(model => `
     <tr>
@@ -766,12 +890,155 @@ function restartAutoRefreshTimer() {
     autoRefreshInterval = null;
   }
 
-  if (!state.apiKey) return;
+  // Native backend owns periodic refresh so the tray title keeps updating
+  // even when the WebView window is hidden or throttled.
+}
 
-  const intervalSeconds = normalizeRefreshIntervalSeconds(settings.refresh_interval_seconds);
-  autoRefreshInterval = setInterval(() => {
-    refreshUsage();
-  }, intervalSeconds * 1000);
+// Multi-key functions
+async function loadApiKeys() {
+  if (!tauriInvoke) return;
+  try {
+    const keys = await tauriInvoke('cmd_get_api_keys');
+    state.apiKeys = keys || [];
+  } catch (e) {
+    console.error('Failed to load API keys:', e);
+    state.apiKeys = [];
+  }
+}
+
+async function loadAllUsageData() {
+  if (!tauriInvoke) return;
+  try {
+    const allData = await tauriInvoke('cmd_get_all_usage_data');
+    state.usageData = allData || {};
+  } catch (e) {
+    console.error('Failed to load usage data:', e);
+    state.usageData = {};
+  }
+}
+
+// Key management modal functions
+function showKeyManagementModal() {
+  const modal = document.getElementById('key-management-modal');
+  if (!modal) return;
+
+  renderKeyList();
+  modal.style.display = 'flex';
+}
+
+function renderKeyList() {
+  const container = document.getElementById('key-list');
+  if (!container) return;
+
+  if (state.apiKeys.length === 0) {
+    container.innerHTML = `<div class="empty-state" style="display: block; margin: 0; padding: 40px 20px;">
+      <p style="margin: 0;">No API keys configured.</p>
+    </div>`;
+    return;
+  }
+
+  container.innerHTML = state.apiKeys.map(key => {
+    const data = state.usageData[key.id];
+    const percent = data?.used_percent || 0;
+    const statusClass = percent >= 90 ? 'critical' : percent >= 70 ? 'warning' : 'normal';
+    return `
+      <div class="key-list-item">
+        <span class="key-color-dot" style="background: ${key.color}; width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;"></span>
+        <span class="key-name">${escapeHtml(key.name)}</span>
+        <span class="key-interval">${key.refresh_interval}s</span>
+        <button onclick="openKeyEditDialog('${key.id}')">Edit</button>
+        <button class="danger" onclick="deleteKey('${key.id}')">Delete</button>
+      </div>
+    `;
+  }).join('');
+}
+
+function openKeyEditDialog(keyId = null) {
+  const dialog = document.getElementById('key-edit-dialog');
+  const title = document.getElementById('key-edit-title');
+  const idInput = document.getElementById('key-edit-id');
+  const nameInput = document.getElementById('key-edit-name');
+  const colorInput = document.getElementById('key-edit-color');
+  const intervalInput = document.getElementById('key-edit-interval');
+  const apiKeyInput = document.getElementById('key-edit-api-key');
+
+  if (keyId) {
+    // Edit mode
+    const key = state.apiKeys.find(k => k.id === keyId);
+    if (key) {
+      title.textContent = state.language === 'zh-CN' ? 'Edit API Key' : 'Edit API Key';
+      idInput.value = key.id;
+      nameInput.value = key.name;
+      colorInput.value = key.color;
+      intervalInput.value = key.refresh_interval;
+      apiKeyInput.value = '';
+      apiKeyInput.placeholder = state.language === 'zh-CN' ? 'Leave empty to keep current key' : 'Leave empty to keep current key';
+    }
+  } else {
+    // Add mode
+    title.textContent = state.language === 'zh-CN' ? 'Add API Key' : 'Add API Key';
+    idInput.value = '';
+    nameInput.value = '';
+    colorInput.value = '#00d4ff';
+    intervalInput.value = '20';
+    apiKeyInput.value = '';
+    apiKeyInput.placeholder = 'API Key';
+  }
+
+  dialog.style.display = 'flex';
+}
+
+function closeKeyEditDialog() {
+  document.getElementById('key-edit-dialog').style.display = 'none';
+}
+
+async function saveKeyEdit() {
+  const id = document.getElementById('key-edit-id').value;
+  const name = document.getElementById('key-edit-name').value.trim();
+  const color = document.getElementById('key-edit-color').value;
+  const interval = parseInt(document.getElementById('key-edit-interval').value) || 20;
+  const apiKey = document.getElementById('key-edit-api-key').value.trim();
+
+  if (!name) {
+    alert(state.language === 'zh-CN' ? 'Please enter a name' : 'Please enter a name');
+    return;
+  }
+
+  try {
+    if (id) {
+      // Update existing - pass empty apiKey to indicate no change
+      await tauriInvoke('cmd_update_api_key', {
+        id, name, color, refreshInterval: interval, apiKey: apiKey || ''
+      });
+    } else {
+      // Add new
+      if (!apiKey) {
+        alert(state.language === 'zh-CN' ? 'Please enter an API key' : 'Please enter an API key');
+        return;
+      }
+      await tauriInvoke('cmd_add_api_key', {
+        name, color, apiKey, refreshInterval: interval
+      });
+    }
+    closeKeyEditDialog();
+    await loadApiKeys();
+    await loadAllUsageData();
+    renderKeyList();
+  } catch (e) {
+    alert(state.language === 'zh-CN' ? 'Failed to save: ' + e : 'Failed to save: ' + e);
+  }
+}
+
+async function deleteKey(keyId) {
+  if (!confirm(state.language === 'zh-CN' ? 'Delete this API key?' : 'Delete this API key?')) return;
+  try {
+    await tauriInvoke('cmd_delete_api_key', { id: keyId });
+    await loadApiKeys();
+    await loadAllUsageData();
+    renderKeyList();
+  } catch (e) {
+    alert(state.language === 'zh-CN' ? 'Failed to delete: ' + e : 'Failed to delete: ' + e);
+  }
 }
 
 function formatCountdown(timestamp) {

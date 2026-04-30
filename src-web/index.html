@@ -1323,6 +1323,46 @@ body {
         </div>
       </footer>
     </div>
+
+    <!-- Key Management Modal -->
+    <div id="key-management-modal" class="dialog-overlay" style="display: none;">
+      <div class="dialog" style="max-width: 600px; max-height: 80vh; overflow-y: auto;">
+        <h2 data-i18n="keyManagement">API Key Management</h2>
+        <div id="key-list" class="key-list"></div>
+        <button id="btn-add-key-modal" class="btn btn-neon" style="margin-top: 16px;">
+          + Add New Key
+        </button>
+        <button id="btn-close-modal" class="btn" style="position: absolute; top: 16px; right: 16px;">x</button>
+      </div>
+    </div>
+
+    <!-- Add/Edit Key Dialog -->
+    <div id="key-edit-dialog" class="dialog-overlay" style="display: none;">
+      <div class="dialog">
+        <h2 id="key-edit-title">Add API Key</h2>
+        <input type="hidden" id="key-edit-id" />
+        <div class="form-group">
+          <label data-i18n="keyName">Name</label>
+          <input type="text" id="key-edit-name" class="dialog-input" placeholder="Personal" />
+        </div>
+        <div class="form-group">
+          <label data-i18n="keyColor">Color</label>
+          <input type="color" id="key-edit-color" value="#00d4ff" />
+        </div>
+        <div class="form-group">
+          <label data-i18n="keyRefresh">Refresh Interval (seconds)</label>
+          <input type="number" id="key-edit-interval" class="dialog-input" value="20" min="5" />
+        </div>
+        <div class="form-group">
+          <label data-i18n="apiKey">API Key</label>
+          <input type="password" id="key-edit-api-key" class="dialog-input" placeholder="API Key" />
+        </div>
+        <div class="dialog-actions">
+          <button id="btn-cancel-key-edit" class="btn">Cancel</button>
+          <button id="btn-save-key-edit" class="btn btn-neon">Save</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- API Key Dialog -->
