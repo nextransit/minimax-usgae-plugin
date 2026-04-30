@@ -404,9 +404,9 @@ pub fn update_tray_menu(app: &AppHandle, state: &AppState) {
     let api_key = state.api_key.lock().unwrap();
     let i18n = tray_i18n(&config.language);
 
-    let status_text = if let Some(ref data) = *usage {
+    let status_text = if let Some(data) = usage.values().next() {
         build_status_text(data, config.show_percent_in_tray)
-    } else if api_key.is_none() {
+    } else if api_key.is_none() && config.api_keys.is_empty() {
         if config.show_percent_in_tray {
             i18n.set_key_hint.to_string()
         } else {
@@ -444,7 +444,7 @@ pub fn update_tray_menu(app: &AppHandle, state: &AppState) {
         Box::new(clear_key),
     ];
 
-    if let Some(ref data) = *usage {
+    if let Some(data) = usage.values().next() {
         if data.ok {
             if !data.primary_model_name.is_empty() {
                 let model_item = MenuItem::with_id(
@@ -522,7 +522,8 @@ pub fn update_tray_menu(app: &AppHandle, state: &AppState) {
     // 使用 try_lock 避免死锁，如果锁被占用则跳过托盘更新
     let tray_title = if config.show_percent_in_tray {
         usage
-            .as_ref()
+            .values()
+            .next()
             .and_then(|data| format_tray_usage(data.used_percent, data.weekly_used_percent))
             .unwrap_or_else(|| "MM".to_string())
     } else {
@@ -607,7 +608,7 @@ pub fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                                     Ok(data) => {
                                         let state: State<AppState> = app_h_clone.state();
                                         let mut usage = state.usage_data.lock().unwrap();
-                                        *usage = Some(data.clone());
+                                        usage.insert("default".to_string(), data.clone());
                                         update_tray_menu(&app_h_clone, &state);
                                         let _ = app_h_clone.emit("usage-updated", data);
                                     }
@@ -640,7 +641,7 @@ pub fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                     }
                     {
                         let mut usage = state.usage_data.lock().unwrap();
-                        *usage = None;
+                        usage.clear();
                     }
                     update_tray_menu(app, &state);
                 }

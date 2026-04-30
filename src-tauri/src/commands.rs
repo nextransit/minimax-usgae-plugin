@@ -1,4 +1,4 @@
-use crate::state::{AppConfig, AppState, UsageData};
+use crate::state::{ApiKeyEntry, AppConfig, AppState, UsageData};
 use tauri::{AppHandle, State};
 use tauri_plugin_autostart::ManagerExt;
 
@@ -46,7 +46,7 @@ pub fn cmd_set_api_key(app: AppHandle, state: State<AppState>, key: String) -> R
 }
 
 #[tauri::command]
-pub fn cmd_clear_api_key(app: AppHandle, state: State<AppState>) -> Result<(), String> {
+pub fn cmd_clear_api_key(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     crate::api_key_store::clear_api_key()?;
 
     {
@@ -55,7 +55,7 @@ pub fn cmd_clear_api_key(app: AppHandle, state: State<AppState>) -> Result<(), S
     }
     {
         let mut usage = state.usage_data.lock().unwrap();
-        *usage = None;
+        usage.clear();
     }
     crate::tray::update_tray_menu(&app, &state);
     Ok(())
@@ -69,10 +69,10 @@ pub async fn cmd_fetch_usage(api_key: String, timeout_ms: u64) -> Result<UsageDa
 }
 
 #[tauri::command]
-pub fn cmd_update_usage_data(app: AppHandle, state: State<AppState>, data: UsageData) {
+pub fn cmd_update_usage_data(app: AppHandle, state: State<'_, AppState>, key_id: String, data: UsageData) {
     {
         let mut usage = state.usage_data.lock().unwrap();
-        *usage = Some(data);
+        usage.insert(key_id, data);
     }
     crate::tray::update_tray_menu(&app, &state);
 }
@@ -99,4 +99,141 @@ pub fn cmd_mark_first_run_complete(state: State<AppState>) -> Result<(), String>
     let mut config = state.config.lock().unwrap();
     config.first_run = false;
     crate::config::save_config(&config).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn cmd_get_api_keys(state: State<'_, AppState>) -> Vec<ApiKeyEntry> {
+    state.config.lock().unwrap().api_keys.clone()
+}
+
+#[tauri::command]
+pub async fn cmd_add_api_key(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    name: String,
+    color: String,
+    api_key: String,
+    refresh_interval: u32,
+) -> Result<ApiKeyEntry, String> {
+    // Validate key first
+    let test_result = crate::api::fetch_minimax_usage(&api_key, 10000).await;
+    if test_result.is_err() {
+        return Err("Invalid API key: could not fetch usage data".to_string());
+    }
+
+    let entry = ApiKeyEntry {
+        id: uuid::Uuid::new_v4().to_string(),
+        name,
+        color,
+        keychain_service: "com.decard.minimax-monitor.keys".to_string(),
+        keychain_account: uuid::Uuid::new_v4().to_string(),
+        refresh_interval,
+        created_at: chrono::Utc::now().timestamp(),
+        is_active: true,
+    };
+
+    // Save key to Keychain
+    crate::api_key_store::save_key_for_entry(&entry, &api_key)?;
+
+    // Add to config
+    {
+        let mut config = state.config.lock().unwrap();
+        config.api_keys.push(entry.clone());
+        crate::config::save_config(&config).map_err(|e| e.to_string())?;
+    }
+
+    // Update tray
+    crate::tray::update_tray_menu(&app, &state);
+
+    Ok(entry)
+}
+
+#[tauri::command]
+pub fn cmd_update_api_key(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    name: String,
+    color: String,
+    refresh_interval: u32,
+) -> Result<(), String> {
+    let mut config = state.config.lock().unwrap();
+    if let Some(entry) = config.api_keys.iter_mut().find(|e| e.id == id) {
+        entry.name = name;
+        entry.color = color;
+        entry.refresh_interval = refresh_interval;
+        crate::config::save_config(&config).map_err(|e| e.to_string())?;
+    }
+    drop(config);
+    crate::tray::update_tray_menu(&app, &state);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn cmd_delete_api_key(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<(), String> {
+    let entry = {
+        let config = state.config.lock().unwrap();
+        config.api_keys.iter().find(|e| e.id == id).cloned()
+    };
+
+    if let Some(entry) = entry {
+        crate::api_key_store::delete_key_for_entry(&entry)?;
+
+        {
+            let mut config = state.config.lock().unwrap();
+            config.api_keys.retain(|e| e.id != id);
+            crate::config::save_config(&config).map_err(|e| e.to_string())?;
+        }
+
+        {
+            let mut usage = state.usage_data.lock().unwrap();
+            usage.remove(&id);
+        }
+    }
+
+    crate::tray::update_tray_menu(&app, &state);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn cmd_test_api_key(api_key: String) -> Result<UsageData, String> {
+    crate::api::fetch_minimax_usage(&api_key, 10000)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn cmd_reorder_api_keys(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    ids: Vec<String>,
+) -> Result<(), String> {
+    let mut config = state.config.lock().unwrap();
+
+    let mut new_keys = Vec::new();
+    for id in ids {
+        if let Some(key) = config.api_keys.iter().find(|e| e.id == id).cloned() {
+            new_keys.push(key);
+        }
+    }
+    config.api_keys = new_keys;
+
+    crate::config::save_config(&config).map_err(|e| e.to_string())?;
+    drop(config);
+    crate::tray::update_tray_menu(&app, &state);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn cmd_get_usage_for_key(state: State<'_, AppState>, key_id: String) -> Option<UsageData> {
+    state.usage_data.lock().unwrap().get(&key_id).cloned()
+}
+
+#[tauri::command]
+pub fn cmd_get_all_usage_data(state: State<'_, AppState>) -> std::collections::HashMap<String, UsageData> {
+    state.usage_data.lock().unwrap().clone()
 }

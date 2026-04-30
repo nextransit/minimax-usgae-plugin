@@ -9,9 +9,9 @@ mod tray;
 #[cfg(target_os = "linux")]
 mod linux_fix;
 
-use tauri::{Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
-pub use state::{AppConfig, AppState, UsageData, ModelDetail};
+pub use state::{ApiKeyEntry, AppConfig, AppState, UsageData, ModelDetail};
 pub use commands::*;
 
 // Include frontend resources directly using include_str!
@@ -54,15 +54,15 @@ fn init_logging() {
     let _ = builder.try_init();
 }
 
-async fn refresh_usage_data(app_h: &tauri::AppHandle, key: String, reason: &'static str) {
-    log::info!("Fetching usage data ({})", reason);
-    match api::fetch_minimax_usage(&key, API_FETCH_TIMEOUT_MS).await {
+async fn refresh_usage_data(app_h: &AppHandle, key_id: String, api_key: String, reason: &'static str) {
+    log::info!("Fetching usage data for key {} ({})", key_id, reason);
+    match api::fetch_minimax_usage(&api_key, API_FETCH_TIMEOUT_MS).await {
         Ok(data) => {
             let state: tauri::State<AppState> = app_h.state();
 
             {
                 let mut usage = state.usage_data.lock().unwrap();
-                *usage = Some(data.clone());
+                usage.insert(key_id.clone(), data.clone());
             }
 
             tray::update_tray_menu(app_h, &state);
@@ -73,7 +73,7 @@ async fn refresh_usage_data(app_h: &tauri::AppHandle, key: String, reason: &'sta
             }
         }
         Err(e) => {
-            log::error!("Usage fetch failed ({}): {}", reason, e);
+            log::error!("Usage fetch failed for key {} ({}): {}", key_id, reason, e);
         }
     }
 }
@@ -89,14 +89,25 @@ fn spawn_usage_refresh_loop(app_h: tauri::AppHandle) {
 
             tokio::time::sleep(std::time::Duration::from_secs(interval_seconds)).await;
 
-            let api_key = {
+            // For multi-key: iterate over all active keys and fetch usage for each
+            let keys_to_fetch: Vec<(String, String)> = {
                 let state: tauri::State<AppState> = app_h.state();
-                let api_key = state.api_key.lock().unwrap();
-                api_key.clone()
+                let config = state.config.lock().unwrap();
+                config.api_keys.iter()
+                    .filter(|e| e.is_active)
+                    .filter_map(|e| {
+                        // Load the actual API key from keychain
+                        crate::api_key_store::load_key_for_entry(e)
+                            .map(|key| (e.id.clone(), key))
+                    })
+                    .collect()
             };
 
-            if let Some(key) = api_key {
-                refresh_usage_data(&app_h, key, "scheduled").await;
+            for (key_id, api_key) in keys_to_fetch {
+                let app_h = app_h.clone();
+                tauri::async_runtime::spawn(async move {
+                    refresh_usage_data(&app_h, key_id, api_key, "scheduled").await;
+                });
             }
         }
     });
@@ -133,7 +144,7 @@ pub fn run() {
     let app_state = AppState {
         config: std::sync::Mutex::new(saved_config.clone()),
         api_key: std::sync::Mutex::new(saved_api_key),
-        usage_data: std::sync::Mutex::new(None),
+        usage_data: std::sync::Mutex::new(std::collections::HashMap::new()),
         tray: std::sync::Mutex::new(None),
     };
 
@@ -227,11 +238,26 @@ pub fn run() {
 
             spawn_usage_refresh_loop(app_handle.clone());
 
-            // Initial data fetch if API key exists
-            if let Some(key) = api_key_for_fetch {
+            // Initial data fetch - support both multi-key and legacy single-key
+            let initial_keys: Vec<(String, String)> = if !saved_config.api_keys.is_empty() {
+                // Multi-key mode: load from config.api_keys
+                saved_config.api_keys.iter()
+                    .filter(|e| e.is_active)
+                    .filter_map(|e| {
+                        api_key_store::load_key_for_entry(e).map(|key| (e.id.clone(), key))
+                    })
+                    .collect()
+            } else if let Some(ref key) = api_key_for_fetch {
+                // Legacy mode: use saved single key with default key_id
+                vec![("default".to_string(), key.clone())]
+            } else {
+                vec![]
+            };
+
+            for (key_id, api_key) in initial_keys {
                 let app_h = app_handle.clone();
                 tauri::async_runtime::spawn(async move {
-                    refresh_usage_data(&app_h, key, "initial").await;
+                    refresh_usage_data(&app_h, key_id, api_key, "initial").await;
                 });
             }
 
@@ -249,6 +275,14 @@ pub fn run() {
             cmd_set_autostart,
             cmd_mark_first_run_complete,
             cmd_debug_state,
+            cmd_get_api_keys,
+            cmd_add_api_key,
+            cmd_update_api_key,
+            cmd_delete_api_key,
+            cmd_test_api_key,
+            cmd_reorder_api_keys,
+            cmd_get_usage_for_key,
+            cmd_get_all_usage_data,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
