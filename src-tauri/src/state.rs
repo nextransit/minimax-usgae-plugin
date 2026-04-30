@@ -1,9 +1,11 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Mutex;
 use tauri::tray::TrayIcon as TauriTrayIcon;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
+    pub config_version: u32,
     pub refresh_interval_seconds: u32,
     pub show_weekly_in_status: bool,
     pub show_percent_in_tray: bool,  // 新增：托盘栏显示当前周期比例
@@ -12,11 +14,13 @@ pub struct AppConfig {
     pub first_run: bool,               // 新增：首次运行标记
     pub start_minimized: bool,         // 新增：启动时最小化
     pub enable_notifications: bool,    // 新增：启用通知
+    pub api_keys: Vec<ApiKeyEntry>,
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
+            config_version: 2,
             refresh_interval_seconds: 20,
             show_weekly_in_status: true,
             show_percent_in_tray: true,   // 默认开启
@@ -25,6 +29,7 @@ impl Default for AppConfig {
             first_run: true,           // 默认首次运行
             start_minimized: false,
             enable_notifications: true,
+            api_keys: Vec::new(),
         }
     }
 }
@@ -61,9 +66,21 @@ pub struct ModelDetail {
     pub used_count: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiKeyEntry {
+    pub id: String,              // UUID for internal reference
+    pub name: String,            // User-defined name (e.g., "Personal")
+    pub color: String,           // Hex color (e.g., "#00d4ff")
+    pub keychain_service: String, // Keychain service identifier
+    pub keychain_account: String,  // Keychain account
+    pub refresh_interval: u32,    // Seconds (min: 5, default: 20)
+    pub created_at: i64,         // Unix timestamp
+    pub is_active: bool,         // Whether this key is used
+}
+
 pub struct AppState {
     pub config: Mutex<AppConfig>,
     pub api_key: Mutex<Option<String>>,
-    pub usage_data: Mutex<Option<UsageData>>,
+    pub usage_data: Mutex<HashMap<String, UsageData>>,
     pub tray: Mutex<Option<TauriTrayIcon>>,
 }
