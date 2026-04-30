@@ -13,15 +13,13 @@ const LEGACY_SERVICES_ENV: &str = "MINIMAX_MONITOR_KEYCHAIN_LEGACY_SERVICES";
 const DISABLE_KEYCHAIN_ENV: &str = "MINIMAX_MONITOR_DISABLE_KEYCHAIN";
 
 fn keychain_disabled() -> bool {
+    // For multi-key support, default to file-based storage to avoid macOS Keychain popup issues
+    // Users can enable keychain by setting MINIMAX_MONITOR_DISABLE_KEYCHAIN=0
     if let Some(value) = std::env::var(DISABLE_KEYCHAIN_ENV).ok() {
         let normalized = value.trim().to_ascii_lowercase();
-        return normalized == "1"
-            || normalized == "true"
-            || normalized == "yes"
-            || normalized == "on";
+        return !(normalized == "0" || normalized == "false");
     }
-
-    false
+    true // Default to disabled (file-based storage) to avoid Keychain popups
 }
 
 fn primary_service() -> String {
