@@ -66,7 +66,7 @@ async fn refresh_usage_data(app_h: &AppHandle, key_id: String, api_key: String, 
             }
 
             tray::update_tray_menu(app_h, &state);
-            let _ = app_h.emit("usage-updated", data.clone());
+            let _ = app_h.emit("usage-updated", (&key_id, data.clone()));
 
             if let Some(percent) = data.used_percent {
                 notifications::check_and_notify(app_h, percent, 100.0 - percent);

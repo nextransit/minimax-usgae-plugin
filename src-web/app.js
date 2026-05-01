@@ -254,14 +254,14 @@ async function init() {
 async function setupEventListeners() {
   if (!tauriListen) return;
 
-  // Listen for usage updates from backend (multi-key format)
+  // Listen for usage updates from backend (multi-key format: [keyId, UsageData])
   await tauriListen('usage-updated', (event) => {
     const payload = event.payload;
-    if (payload && payload.keyId) {
-      // Multi-key format: payload.keyId -> usage data
-      state.usageData[payload.keyId] = payload.data;
+    if (Array.isArray(payload) && payload.length === 2) {
+      // New multi-key format: [keyId, data]
+      state.usageData[payload[0]] = payload[1];
     } else if (payload && typeof payload === 'object' && !payload.keyId) {
-      // Legacy single-key format
+      // Legacy single-key format (raw UsageData)
       state.usageData['default'] = payload;
     }
     render();
@@ -355,10 +355,10 @@ async function refreshAllUsage() {
   render();
 
   try {
-    // Fetch usage data for all keys
+    // Fetch usage data for all keys - backend handles per-key refresh via events
+    // Frontend just needs to reload the full HashMap
     const allData = await tauriInvoke('cmd_get_all_usage_data');
     state.usageData = allData || {};
-    await tauriInvoke('cmd_update_usage_data', { data: state.usageData });
     render();
   } catch (error) {
     console.error('Fetch error:', error);
@@ -385,8 +385,8 @@ async function saveApiKey() {
     await tauriInvoke('cmd_add_api_key', {
       name: 'Key ' + (state.apiKeys.length + 1),
       color: '#00d4ff',
-      apiKey: apiKey,
-      refreshInterval: settings.refresh_interval_seconds || 20
+      api_key: apiKey,
+      refresh_interval: settings.refresh_interval_seconds || 20
     });
     hideApiKeyDialog();
     await loadApiKeys();
@@ -415,6 +415,11 @@ async function clearApiKey() {
 }
 
 function showApiKeyDialog() {
+  // If API keys already exist, open the management modal instead
+  if (state.apiKeys.length > 0) {
+    showKeyManagementModal();
+    return;
+  }
   const dialog = document.getElementById('api-key-dialog');
   const input = document.getElementById('api-key-input');
   if (dialog) {
@@ -1006,24 +1011,23 @@ async function saveKeyEdit() {
 
   try {
     if (id) {
-      // Update existing - pass empty apiKey to indicate no change
       await tauriInvoke('cmd_update_api_key', {
-        id, name, color, refreshInterval: interval, apiKey: apiKey || ''
+        id, name, color, refresh_interval: interval, api_key: apiKey || null
       });
     } else {
-      // Add new
       if (!apiKey) {
         alert(state.language === 'zh-CN' ? 'Please enter an API key' : 'Please enter an API key');
         return;
       }
       await tauriInvoke('cmd_add_api_key', {
-        name, color, apiKey, refreshInterval: interval
+        name, color, api_key: apiKey, refresh_interval: interval
       });
     }
     closeKeyEditDialog();
     await loadApiKeys();
     await loadAllUsageData();
     renderKeyList();
+    render();
   } catch (e) {
     alert(state.language === 'zh-CN' ? 'Failed to save: ' + e : 'Failed to save: ' + e);
   }
@@ -1036,6 +1040,7 @@ async function deleteKey(keyId) {
     await loadApiKeys();
     await loadAllUsageData();
     renderKeyList();
+    render();
   } catch (e) {
     alert(state.language === 'zh-CN' ? 'Failed to delete: ' + e : 'Failed to delete: ' + e);
   }

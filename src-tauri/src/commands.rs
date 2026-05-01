@@ -156,15 +156,40 @@ pub fn cmd_update_api_key(
     name: String,
     color: String,
     refresh_interval: u32,
+    api_key: Option<String>,
 ) -> Result<(), String> {
+    // If updating the key itself, extract keychain info first (must borrow before lock is released)
+    let keychain_update = api_key.as_ref().map(|new_key| {
+        let config = state.config.lock().unwrap();
+        config.api_keys.iter()
+            .find(|e| e.id == id)
+            .map(|e| (e.keychain_service.clone(), e.keychain_account.clone(), new_key.clone()))
+    }).flatten();
+
     let mut config = state.config.lock().unwrap();
     if let Some(entry) = config.api_keys.iter_mut().find(|e| e.id == id) {
         entry.name = name;
         entry.color = color;
         entry.refresh_interval = refresh_interval;
-        crate::config::save_config(&config).map_err(|e| e.to_string())?;
     }
+    crate::config::save_config(&config).map_err(|e| e.to_string())?;
     drop(config);
+
+    // Update keychain entry if a new key was provided
+    if let Some((svc, acc, key)) = keychain_update {
+        let entry_for_store = crate::state::ApiKeyEntry {
+            id: id.clone(),
+            name: String::new(),
+            color: String::new(),
+            keychain_service: svc,
+            keychain_account: acc,
+            refresh_interval: 0,
+            created_at: 0,
+            is_active: false,
+        };
+        crate::api_key_store::save_key_for_entry(&entry_for_store, &key)?;
+    }
+
     crate::tray::update_tray_menu(&app, &state);
     Ok(())
 }
