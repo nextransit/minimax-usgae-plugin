@@ -666,8 +666,9 @@ pub fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                     let _ = window.show();
                     let _ = window.set_focus();
                 }
-                let state: State<AppState> = app.state();
-                update_tray_menu(app, &state);
+                // Note: do NOT call update_tray_menu here - the refresh loop already
+                // keeps the tray menu in sync, and rebuilding it on every click
+                // creates a deadlock hazard with the tray lock held by refresh tasks.
             }
         })
         .build(app)?;
