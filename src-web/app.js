@@ -415,6 +415,11 @@ async function clearApiKey() {
 }
 
 function showApiKeyDialog() {
+  // Guard: if init() hasn't completed yet, do nothing
+  // (state.config is null before init finishes loading config and keys)
+  if (state.config === null) {
+    return;
+  }
   // If API keys already exist, open the management modal instead
   if (state.apiKeys.length > 0) {
     showKeyManagementModal();
