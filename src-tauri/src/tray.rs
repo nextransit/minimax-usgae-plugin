@@ -625,10 +625,14 @@ pub fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                     if tray_ready_at.elapsed() < Duration::from_millis(1500) {
                         return;
                     }
-                    if let Some(window) = app.get_webview_window("main") {
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                    }
+                    // Dispatch to main thread - window show/focus can block WebView IPC
+                    let app_clone = app.clone();
+                    tauri::async_runtime::spawn(async move {
+                        if let Some(window) = app_clone.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    });
                 }
                 "clear_key" => {
                     let state: State<AppState> = app.state();
@@ -643,7 +647,12 @@ pub fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                         let mut usage = state.usage_data.lock().unwrap();
                         usage.clear();
                     }
-                    update_tray_menu(app, &state);
+                    // Dispatch tray menu update to avoid holding locks while rebuilding menu
+                    let app_clone = app.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let state: State<AppState> = app_clone.state();
+                        update_tray_menu(&app_clone, &state);
+                    });
                 }
                 "toggle_show_percent" => {
                     let state: State<AppState> = app.state();
@@ -654,7 +663,12 @@ pub fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                             log::error!("Failed to save config for tray percent toggle: {}", e);
                         }
                     }
-                    update_tray_menu(app, &state);
+                    // Dispatch tray menu update to avoid holding locks while rebuilding menu
+                    let app_clone = app.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let state: State<AppState> = app_clone.state();
+                        update_tray_menu(&app_clone, &state);
+                    });
                 }
                 _ => {}
             }
@@ -662,13 +676,17 @@ pub fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
         .on_tray_icon_event(|tray, event| {
             if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
                 let app = tray.app_handle();
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
-                // Note: do NOT call update_tray_menu here - the refresh loop already
-                // keeps the tray menu in sync, and rebuilding it on every click
-                // creates a deadlock hazard with the tray lock held by refresh tasks.
+                // Dispatch window show/focus to the main thread so the tray event
+                // handler never blocks on WebView IPC. Directly calling get_webview_window
+                // or window.show() on the tray thread can block if the WebView is busy,
+                // causing the entire tray to freeze.
+                let app_clone = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Some(window) = app_clone.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                });
             }
         })
         .build(app)?;
