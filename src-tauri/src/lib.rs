@@ -177,13 +177,16 @@ pub fn run() {
             tray::setup_tray(app)?;
             log::info!("Tray setup complete");
 
+
             // Handle window close event - hide instead of quit
             let app_handle = app.handle().clone();
             if let Some(window) = app.get_webview_window("main") {
                 let window_clone = window.clone();
                 window.on_window_event(move |event| {
                     if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                        window_clone.hide().unwrap();
+                        // Emit window-hidden so frontend can close all dialogs before hiding
+                        let _ = window_clone.app_handle().emit("window-hidden", ());
+                        let _ = window_clone.hide();
                         api.prevent_close();
                     }
                 });

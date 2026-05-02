@@ -184,32 +184,24 @@ let settings = {
 
 // Initialize app
 async function init() {
-  console.log('[DEBUG init] Function started');
   try {
-    console.log('[DEBUG init] Waiting for Tauri API...');
     const tauri = await waitForTauriAPI();
-    console.log('[DEBUG init] Tauri API found');
     tauriInvoke = tauri.invoke;
     tauriListen = tauri.listen;
 
     // Load config
-    console.log('[DEBUG init] Loading config...');
     state.config = await tauriInvoke('cmd_get_config');
     state.language = state.config?.language === 'auto' ? 'zh-CN' : (state.config?.language || 'zh-CN');
 
     // Load API keys (multi-key support)
-    console.log('[DEBUG init] Loading API keys...');
     const fetchedApiKeys = await tauriInvoke('cmd_get_api_keys');
-    console.log('[DEBUG init] Got API keys:', fetchedApiKeys ? fetchedApiKeys.length + ' keys' : 'null');
     state.apiKeys = fetchedApiKeys || [];
 
     // Load all usage data
-    console.log('[DEBUG init] Loading usage data...');
     try {
       const allData = await tauriInvoke('cmd_get_all_usage_data');
       state.usageData = allData || {};
     } catch (e) {
-      console.log('[DEBUG init] No usage data yet:', e);
       state.usageData = {};
     }
 
@@ -271,6 +263,17 @@ async function setupEventListeners() {
   await tauriListen('show-set-key-dialog', () => {
     // Disable auto modal popup from background events; user opens it explicitly from UI.
     return;
+  });
+
+  // Listen for window-hidden event - close all dialogs when window is about to hide
+  await tauriListen('window-hidden', () => {
+    // Close all open dialogs and modals so they don't persist on next launch
+    const apiKeyDialog = document.getElementById('api-key-dialog');
+    const keyMgmtModal = document.getElementById('key-management-modal');
+    const keyEditDialog = document.getElementById('key-edit-dialog');
+    if (apiKeyDialog) apiKeyDialog.style.display = 'none';
+    if (keyMgmtModal) keyMgmtModal.style.display = 'none';
+    if (keyEditDialog) keyEditDialog.style.display = 'none';
   });
 }
 
