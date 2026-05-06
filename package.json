@@ -115,7 +115,8 @@
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
     "tauri:build:ci": "tauri build --ci --no-sign",
-    "tauri:info": "tauri info"
+    "tauri:info": "tauri info",
+    "tauri:build:linux:remote": "bash scripts/remote-linux-build.sh"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.10.1",
