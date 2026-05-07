@@ -36,7 +36,13 @@ fn default_true() -> bool {
 pub fn load_config() -> Result<AppConfig, Box<dyn std::error::Error>> {
     let path = get_config_path().ok_or("Cannot determine config path")?;
     if !path.exists() {
-        return Ok(AppConfig::default());
+        let mut config = AppConfig::default();
+        if migrate_v1_to_v2(&mut config) {
+            if let Err(e) = save_config(&config) {
+                log::warn!("Failed to save migrated default config: {}", e);
+            }
+        }
+        return Ok(config);
     }
     let content = fs::read_to_string(&path)?;
 
@@ -47,7 +53,11 @@ pub fn load_config() -> Result<AppConfig, Box<dyn std::error::Error>> {
         // Check if migration is needed: config_version == 0 or api_keys is empty
         if config.config_version == 0 || config.api_keys.is_empty() {
             log::info!("Migrating config from v1 to v2");
-            migrate_v1_to_v2(&mut config);
+            if migrate_v1_to_v2(&mut config) {
+                if let Err(e) = save_config(&config) {
+                    log::warn!("Failed to save migrated config: {}", e);
+                }
+            }
         }
         return Ok(config);
     }
@@ -70,13 +80,22 @@ pub fn load_config() -> Result<AppConfig, Box<dyn std::error::Error>> {
     };
 
     // Migrate v1 to v2
-    migrate_v1_to_v2(&mut config);
+    if migrate_v1_to_v2(&mut config) {
+        if let Err(e) = save_config(&config) {
+            log::warn!("Failed to save migrated v1 config: {}", e);
+        }
+    }
 
     Ok(config)
 }
 
-fn migrate_v1_to_v2(config: &mut AppConfig) {
+fn migrate_v1_to_v2(config: &mut AppConfig) -> bool {
+    let mut changed = config.config_version != 2;
     config.config_version = 2;
+
+    if !config.api_keys.is_empty() {
+        return changed;
+    }
 
     // Try to load the old single API key from keychain (load_api_key tries primary + all legacy services)
     if let Some(api_key) = api_key_store::load_api_key() {
@@ -85,16 +104,33 @@ fn migrate_v1_to_v2(config: &mut AppConfig) {
                 id: Uuid::new_v4().to_string(),
                 name: "Default".to_string(),
                 color: "#00d4ff".to_string(), // Cyberpunk cyan
-                keychain_service: "com.decard.minimax-monitor".to_string(),
-                keychain_account: "api_key".to_string(),
+                keychain_service: "com.decard.minimax-monitor.keys".to_string(),
+                keychain_account: Uuid::new_v4().to_string(),
                 refresh_interval: config.refresh_interval_seconds,
                 created_at: chrono::Utc::now().timestamp(),
                 is_active: true,
             };
-            config.api_keys.push(entry);
-            log::info!("Migrated old API key to new multi-key format");
+
+            match api_key_store::save_key_for_entry(&entry, &api_key) {
+                Ok(()) => {
+                    config.api_keys.push(entry);
+                    changed = true;
+                    if let Err(e) = api_key_store::clear_api_key() {
+                        log::warn!("Failed to clear legacy API key after migration: {}", e);
+                    }
+                    log::info!("Migrated old API key to new multi-key format");
+                }
+                Err(e) => {
+                    log::warn!(
+                        "Failed to copy legacy API key into multi-key storage: {}",
+                        e
+                    );
+                }
+            }
         }
     }
+
+    changed
 }
 
 pub fn save_config(config: &AppConfig) -> Result<(), Box<dyn std::error::Error>> {

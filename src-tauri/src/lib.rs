@@ -11,8 +11,8 @@ mod linux_fix;
 
 use tauri::{AppHandle, Emitter, Manager};
 
-pub use state::{ApiKeyEntry, AppConfig, AppState, UsageData, ModelDetail};
 pub use commands::*;
+pub use state::{ApiKeyEntry, AppConfig, AppState, ModelDetail, UsageData};
 
 // Include frontend resources directly using include_str!
 // This ensures the frontend is bundled with the binary
@@ -21,6 +21,9 @@ const FRONTEND_CSS: &str = include_str!("../../src-web/styles.css");
 const FRONTEND_JS: &str = include_str!("../../src-web/app.js");
 const API_FETCH_TIMEOUT_MS: u64 = 15_000;
 const MIN_REFRESH_INTERVAL_SECONDS: u64 = 5;
+const KEY_REFRESH_STAGGER_MS: u64 = 250;
+const CLOSE_TRANSIENT_DIALOGS_JS: &str =
+    "window.__MINIMAX_CLOSE_TRANSIENT_DIALOGS__ && window.__MINIMAX_CLOSE_TRANSIENT_DIALOGS__();";
 
 // Use frontend resources to prevent unused warnings
 fn _use_frontend_resources() {
@@ -40,7 +43,11 @@ fn init_logging() {
             .map(|path| path.join("minimax-usage-monitor"))
         {
             if let Err(e) = std::fs::create_dir_all(&log_dir) {
-                eprintln!("Failed to create log directory {}: {}", log_dir.display(), e);
+                eprintln!(
+                    "Failed to create log directory {}: {}",
+                    log_dir.display(),
+                    e
+                );
             } else if let Ok(file) = std::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
@@ -54,17 +61,51 @@ fn init_logging() {
     let _ = builder.try_init();
 }
 
-async fn refresh_usage_data(app_h: &AppHandle, key_id: String, api_key: String, reason: &'static str) {
+async fn refresh_usage_data(
+    app_h: &AppHandle,
+    key_id: String,
+    api_key: String,
+    reason: &'static str,
+) {
+    let guard_key = key_id.clone();
+    {
+        let state: tauri::State<AppState> = app_h.state();
+        let mut in_flight = state.in_flight_refresh_keys.lock().unwrap();
+        if !in_flight.insert(guard_key.clone()) {
+            log::debug!(
+                "Skip usage fetch for key {} ({}): request already in-flight",
+                guard_key,
+                reason
+            );
+            return;
+        }
+    }
+
     log::info!("Fetching usage data for key {} ({})", key_id, reason);
-    match api::fetch_minimax_usage(&api_key, API_FETCH_TIMEOUT_MS).await {
+    let fetch_result = api::fetch_minimax_usage(&api_key, API_FETCH_TIMEOUT_MS).await;
+
+    {
+        let state: tauri::State<AppState> = app_h.state();
+        let mut in_flight = state.in_flight_refresh_keys.lock().unwrap();
+        in_flight.remove(&guard_key);
+    }
+
+    match fetch_result {
         Ok(data) => {
             let state: tauri::State<AppState> = app_h.state();
-
             {
                 let mut usage = state.usage_data.lock().unwrap();
                 usage.insert(key_id.clone(), data.clone());
             }
 
+            log::info!(
+                "Usage data refreshed for key {} ({}): ok={}, model={}, updated={}",
+                key_id,
+                reason,
+                data.ok,
+                data.primary_model_name.as_str(),
+                data.last_updated.as_str()
+            );
             tray::update_tray_menu(app_h, &state);
             let _ = app_h.emit("usage-updated", (&key_id, data.clone()));
 
@@ -73,7 +114,14 @@ async fn refresh_usage_data(app_h: &AppHandle, key_id: String, api_key: String, 
             }
         }
         Err(e) => {
-            log::error!("Usage fetch failed for key {} ({}): {}", key_id, reason, e);
+            let err_msg = e.to_string();
+            log::error!(
+                "Usage fetch failed for key {} ({}): {}",
+                key_id,
+                reason,
+                err_msg
+            );
+            let _ = app_h.emit("usage-error", (&key_id, err_msg));
         }
     }
 }
@@ -93,24 +141,38 @@ fn spawn_usage_refresh_loop(app_h: tauri::AppHandle) {
             let keys_to_fetch: Vec<(String, String)> = {
                 let state: tauri::State<AppState> = app_h.state();
                 let config = state.config.lock().unwrap();
-                config.api_keys.iter()
+                config
+                    .api_keys
+                    .iter()
                     .filter(|e| e.is_active)
                     .filter_map(|e| {
                         // Load the actual API key from keychain
-                        crate::api_key_store::load_key_for_entry(e)
-                            .map(|key| (e.id.clone(), key))
+                        crate::api_key_store::load_key_for_entry(e).map(|key| (e.id.clone(), key))
                     })
                     .collect()
             };
 
-            for (key_id, api_key) in keys_to_fetch {
+            for (idx, (key_id, api_key)) in keys_to_fetch.into_iter().enumerate() {
                 let app_h = app_h.clone();
                 tauri::async_runtime::spawn(async move {
+                    if idx > 0 {
+                        let delay_ms = KEY_REFRESH_STAGGER_MS.saturating_mul(idx as u64);
+                        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                    }
                     refresh_usage_data(&app_h, key_id, api_key, "scheduled").await;
                 });
             }
         }
     });
+}
+
+pub(crate) fn show_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.emit("app-window-will-show", ());
+        let _ = window.eval(CLOSE_TRANSIENT_DIALOGS_JS);
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
 }
 
 pub fn run() {
@@ -146,6 +208,8 @@ pub fn run() {
         api_key: std::sync::Mutex::new(saved_api_key),
         usage_data: std::sync::Mutex::new(std::collections::HashMap::new()),
         tray: std::sync::Mutex::new(None),
+        in_flight_refresh_keys: std::sync::Mutex::new(std::collections::HashSet::new()),
+        tray_render_cache: std::sync::Mutex::new(Default::default()),
     };
 
     let mut builder = tauri::Builder::default()
@@ -163,10 +227,7 @@ pub fn run() {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             log::info!("Another instance launched with args: {:?}", args);
             // 如果已有实例运行，显示主窗口
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
+            show_main_window(app);
         }));
     }
 
@@ -177,7 +238,6 @@ pub fn run() {
             tray::setup_tray(app)?;
             log::info!("Tray setup complete");
 
-
             // Handle window close event - hide instead of quit
             let app_handle = app.handle().clone();
             if let Some(window) = app.get_webview_window("main") {
@@ -185,7 +245,8 @@ pub fn run() {
                 window.on_window_event(move |event| {
                     if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                         // Emit window-hidden so frontend can close all dialogs before hiding
-                        let _ = window_clone.app_handle().emit("window-hidden", ());
+                        let _ = window_clone.emit("window-hidden", ());
+                        let _ = window_clone.eval(CLOSE_TRANSIENT_DIALOGS_JS);
                         let _ = window_clone.hide();
                         api.prevent_close();
                     }
@@ -195,10 +256,7 @@ pub fn run() {
             // Window visibility based on first_run and start_minimized
             if first_run {
                 // First run: show window
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
+                show_main_window(app.handle());
                 // Mark first run complete
                 let state: tauri::State<AppState> = app.state();
                 let mut config = state.config.lock().unwrap();
@@ -209,10 +267,7 @@ pub fn run() {
                 log::info!("Starting minimized to tray");
             } else {
                 // Not first run and not start_minimized: show window
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
+                show_main_window(app.handle());
             }
 
             // Linux 特定初始化
@@ -221,11 +276,13 @@ pub fn run() {
                 // 禁用 WebKitGTK 硬件加速防止白屏
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.with_webview(|webview| {
-                        use webkit2gtk::{WebViewExt, SettingsExt, HardwareAccelerationPolicy};
+                        use webkit2gtk::{HardwareAccelerationPolicy, SettingsExt, WebViewExt};
                         let webview = webview.inner();
-
                         if let Some(settings) = webview.settings() {
-                            SettingsExt::set_hardware_acceleration_policy(&settings, HardwareAccelerationPolicy::Never);
+                            SettingsExt::set_hardware_acceleration_policy(
+                                &settings,
+                                HardwareAccelerationPolicy::Never,
+                            );
                         }
                     });
 
@@ -243,28 +300,33 @@ pub fn run() {
 
             spawn_usage_refresh_loop(app_handle.clone());
 
-            // Initial data fetch - support both multi-key and legacy single-key
-            let initial_keys: Vec<(String, String)> = if !saved_config.api_keys.is_empty() {
-                // Multi-key mode: load from config.api_keys
-                saved_config.api_keys.iter()
-                    .filter(|e| e.is_active)
-                    .filter_map(|e| {
-                        api_key_store::load_key_for_entry(e).map(|key| (e.id.clone(), key))
-                    })
-                    .collect()
-            } else if let Some(ref key) = api_key_for_fetch {
-                // Legacy mode: use saved single key with default key_id
-                vec![("default".to_string(), key.clone())]
-            } else {
-                vec![]
-            };
+            let initial_config = saved_config.clone();
+            let initial_api_key = api_key_for_fetch.clone();
+            tauri::async_runtime::spawn(async move {
+                // Initial data fetch - support both multi-key and legacy single-key.
+                // Loading credentials can touch the OS key store, so keep it off setup.
+                let initial_keys: Vec<(String, String)> = if !initial_config.api_keys.is_empty() {
+                    initial_config
+                        .api_keys
+                        .iter()
+                        .filter(|e| e.is_active)
+                        .filter_map(|e| {
+                            api_key_store::load_key_for_entry(e).map(|key| (e.id.clone(), key))
+                        })
+                        .collect()
+                } else if let Some(key) = initial_api_key {
+                    vec![("default".to_string(), key)]
+                } else {
+                    vec![]
+                };
 
-            for (key_id, api_key) in initial_keys {
-                let app_h = app_handle.clone();
-                tauri::async_runtime::spawn(async move {
-                    refresh_usage_data(&app_h, key_id, api_key, "initial").await;
-                });
-            }
+                for (key_id, api_key) in initial_keys {
+                    let app_h = app_handle.clone();
+                    tauri::async_runtime::spawn(async move {
+                        refresh_usage_data(&app_h, key_id, api_key, "initial").await;
+                    });
+                }
+            });
 
             Ok(())
         })
@@ -288,6 +350,7 @@ pub fn run() {
             cmd_reorder_api_keys,
             cmd_get_usage_for_key,
             cmd_get_all_usage_data,
+            cmd_refresh_all_usage_data,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

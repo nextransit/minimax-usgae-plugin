@@ -1,14 +1,60 @@
 // MiniMax Usage Monitor - Tauri Frontend
-console.log('[DEBUG] app.js script loaded');
 
-// Immediately hide the API key dialog on script load (belt and suspenders)
-(function() {
-    var dialog = document.getElementById('api-key-dialog');
-    if (dialog) {
-        dialog.style.display = 'none';
-        console.log('[DEBUG] Hidden api-key-dialog on load');
-    }
-})();
+const transientDialogIds = [
+  'api-key-dialog',
+  'key-management-modal',
+  'key-edit-dialog',
+];
+const DIALOG_OPEN_ATTR = 'data-minimax-dialog-open';
+
+let uiReady = false;
+let modalOpenIntentDepth = 0;
+
+function withUserModalIntent(action) {
+  if (!uiReady) return;
+  if (document.visibilityState !== 'visible') return;
+  if (typeof document.hasFocus === 'function' && !document.hasFocus()) return;
+  modalOpenIntentDepth += 1;
+  try {
+    return action();
+  } finally {
+    modalOpenIntentDepth = Math.max(0, modalOpenIntentDepth - 1);
+  }
+}
+
+function runTrustedModalAction(event, action) {
+  if (!event?.isTrusted) return;
+  withUserModalIntent(action);
+}
+
+function canOpenTransientDialog() {
+  return uiReady && modalOpenIntentDepth > 0;
+}
+
+function setDialogVisibility(dialogId, isOpen) {
+  const el = document.getElementById(dialogId);
+  if (!el) return;
+  if (isOpen) {
+    el.setAttribute(DIALOG_OPEN_ATTR, '1');
+    el.style.display = 'flex';
+  } else {
+    el.removeAttribute(DIALOG_OPEN_ATTR);
+    el.style.display = 'none';
+  }
+}
+
+function closeTransientDialogs() {
+  transientDialogIds.forEach((id) => setDialogVisibility(id, false));
+
+  const apiKeyInput = document.getElementById('api-key-input');
+  if (apiKeyInput) apiKeyInput.blur();
+
+  const keyEditApiKeyInput = document.getElementById('key-edit-api-key');
+  if (keyEditApiKeyInput) keyEditApiKeyInput.value = '';
+}
+
+window.__MINIMAX_CLOSE_TRANSIENT_DIALOGS__ = closeTransientDialogs;
+closeTransientDialogs();
 
 // Global error handler
 window.onerror = function(msg, url, line, col, error) {
@@ -18,6 +64,32 @@ window.onerror = function(msg, url, line, col, error) {
 
 let tauriInvoke = null;
 let tauriListen = null;
+let uiHandlersInitialized = false;
+let tauriEventListenersInitialized = false;
+let settingsHandlersInitialized = false;
+
+const DEFAULT_CONFIG = Object.freeze({
+  config_version: 2,
+  refresh_interval_seconds: 20,
+  show_weekly_in_status: true,
+  show_percent_in_tray: true,
+  detail_model_limit: 8,
+  language: 'auto',
+  first_run: false,
+  start_minimized: false,
+  enable_notifications: true,
+  api_keys: [],
+});
+
+const TAURI_API_READY_TIMEOUT_MS = 3500;
+const BOOT_IPC_TIMEOUT_MS = 3000;
+const SETTINGS_IPC_TIMEOUT_MS = 3000;
+const REFRESH_IPC_TIMEOUT_MS = 18000;
+const WRITE_IPC_TIMEOUT_MS = 15000;
+
+function defaultConfig() {
+  return { ...DEFAULT_CONFIG, api_keys: [] };
+}
 
 function getTauriAPI() {
   const tauri = window.__TAURI__;
@@ -38,6 +110,41 @@ async function waitForTauriAPI(timeoutMs = 5000) {
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error('Tauri API not available');
+}
+
+function invokeWithTimeout(command, args, timeoutMs = BOOT_IPC_TIMEOUT_MS) {
+  if (!tauriInvoke) {
+    return Promise.reject(new Error('Tauri API not ready'));
+  }
+
+  let timer = null;
+  const invokePromise = args === undefined ? tauriInvoke(command) : tauriInvoke(command, args);
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`${command} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+
+  return Promise.race([invokePromise, timeoutPromise]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
+async function invokeOrFallback(command, args, fallback, timeoutMs = BOOT_IPC_TIMEOUT_MS) {
+  try {
+    return await invokeWithTimeout(command, args, timeoutMs);
+  } catch (error) {
+    console.warn(`${command} failed:`, error);
+    return typeof fallback === 'function' ? fallback(error) : fallback;
+  }
+}
+
+function runInBackground(label, action) {
+  setTimeout(() => {
+    Promise.resolve()
+      .then(action)
+      .catch((error) => console.error(`${label} failed:`, error));
+  }, 0);
 }
 
 // i18n translations
@@ -82,6 +189,7 @@ const i18n = {
     modelTotal: '总额度',
     modelWindow: '时间窗口',
     syncedAt: '最后同步: ',
+    syncUnavailable: '同步失败，页面保持可用',
     syncData: '刷新数据',
     keyConfig: '配置密钥',
     reset: '清除缓存',
@@ -142,6 +250,7 @@ const i18n = {
     modelTotal: 'TOTAL',
     modelWindow: 'WINDOW',
     syncedAt: 'SYNCED AT: ',
+    syncUnavailable: 'Sync failed, page remains available',
     syncData: 'SYNC DATA',
     keyConfig: 'KEY CONFIG',
     reset: 'RESET',
@@ -170,7 +279,9 @@ let state = {
   usageData: {},
   config: null,
   language: 'zh-CN',
+  isBooting: true,
   isLoading: false,
+  lastError: '',
 };
 
 // Settings state
@@ -182,69 +293,125 @@ let settings = {
   show_percent_in_tray: true,
 };
 
+let renderScheduled = false;
+let usageRenderTimer = null;
+const modelTableHtmlCache = new WeakMap();
+const USAGE_RENDER_DEBOUNCE_MS = 120;
+let modelDetailsSignature = '';
+
+function scheduleRender() {
+  if (renderScheduled) return;
+  renderScheduled = true;
+  const flush = () => {
+    renderScheduled = false;
+    render();
+  };
+  if (typeof window.requestAnimationFrame === 'function') {
+    window.requestAnimationFrame(flush);
+  } else {
+    setTimeout(flush, 16);
+  }
+}
+
+function scheduleUsageRender() {
+  if (usageRenderTimer) {
+    clearTimeout(usageRenderTimer);
+  }
+  usageRenderTimer = setTimeout(() => {
+    usageRenderTimer = null;
+    scheduleRender();
+  }, USAGE_RENDER_DEBOUNCE_MS);
+}
+
+function setElementDisplay(el, display) {
+  if (el && el.style.display !== display) {
+    el.style.display = display;
+  }
+}
+
+function setElementClass(el, className) {
+  if (el && el.className !== className) {
+    el.className = className;
+  }
+}
+
+function setElementAttr(el, attrName, value) {
+  if (!el) return;
+  const next = String(value);
+  if (el.getAttribute(attrName) !== next) {
+    el.setAttribute(attrName, next);
+  }
+}
+
+function hasUsableUsageData() {
+  return Object.values(state.usageData || {}).some(data => data && data.ok);
+}
+
 // Initialize app
 async function init() {
+  uiReady = false;
+  closeTransientDialogs();
+  state.config = defaultConfig();
+  state.language = 'zh-CN';
+  state.isBooting = true;
+  state.isLoading = true;
+  state.lastError = '';
+  applyI18n();
+  setupUiHandlers();
+  render();
+  startCountdownTimer();
+  uiReady = true;
+
   try {
-    const tauri = await waitForTauriAPI();
+    const tauri = await waitForTauriAPI(TAURI_API_READY_TIMEOUT_MS);
     tauriInvoke = tauri.invoke;
     tauriListen = tauri.listen;
 
-    // Load config
-    state.config = await tauriInvoke('cmd_get_config');
+    const [config, fetchedApiKeys, allData] = await Promise.all([
+      invokeOrFallback('cmd_get_config', undefined, defaultConfig, BOOT_IPC_TIMEOUT_MS),
+      invokeOrFallback('cmd_get_api_keys', undefined, [], BOOT_IPC_TIMEOUT_MS),
+      invokeOrFallback('cmd_get_all_usage_data', undefined, {}, BOOT_IPC_TIMEOUT_MS),
+    ]);
+
+    state.config = { ...defaultConfig(), ...(config || {}) };
     state.language = state.config?.language === 'auto' ? 'zh-CN' : (state.config?.language || 'zh-CN');
-
-    // Load API keys (multi-key support)
-    const fetchedApiKeys = await tauriInvoke('cmd_get_api_keys');
     state.apiKeys = fetchedApiKeys || [];
-
-    // Load all usage data
-    try {
-      const allData = await tauriInvoke('cmd_get_all_usage_data');
-      state.usageData = allData || {};
-    } catch (e) {
-      state.usageData = {};
-    }
+    state.usageData = allData || {};
 
     // Apply i18n
-    console.log('[DEBUG init] Applying i18n...');
     applyI18n();
 
     // Setup event listeners
-    console.log('[DEBUG init] Setting up event listeners...');
     await setupEventListeners();
-
-    // Setup UI event handlers
-    console.log('[DEBUG init] Setting up UI handlers...');
-    setupUiHandlers();
+    closeTransientDialogs();
 
     // Initial render
-    console.log('[DEBUG init] Rendering...');
+    state.isBooting = false;
+    state.isLoading = false;
     render();
+    closeTransientDialogs();
 
-    // Start countdown timer
-    console.log('[DEBUG init] Starting countdown timer...');
-    startCountdownTimer();
+    runInBackground('loadSettings', async () => {
+      await loadSettings();
+      closeTransientDialogs();
+      restartAutoRefreshTimer();
+    });
 
-    // Load settings
-    console.log('[DEBUG init] Loading settings...');
-    await loadSettings();
-    restartAutoRefreshTimer();
-
-    // If we have API keys, fetch usage data for all
-    console.log('[DEBUG init] API keys check:', state.apiKeys.length);
-    if (state.apiKeys.length > 0) {
-      console.log('[DEBUG init] Fetching usage data...');
-      await refreshAllUsage();
-    }
-    console.log('[DEBUG init] Done!');
+    // The native backend starts the initial refresh. Keep the first screen
+    // responsive and let the user-triggered retry handle manual refreshes.
   } catch (error) {
-    console.error('[DEBUG init] Error:', error);
-    showStartupError(error);
+    state.isBooting = false;
+    state.isLoading = false;
+    state.lastError = String(error);
+    uiReady = true;
+    console.error('Init error:', error);
+    showStartupError(error, { recoverable: true });
   }
 }
 
 async function setupEventListeners() {
-  if (!tauriListen) return;
+  if (!tauriListen || tauriEventListenersInitialized) return;
+  tauriEventListenersInitialized = true;
 
   // Listen for usage updates from backend (multi-key format: [keyId, UsageData])
   await tauriListen('usage-updated', (event) => {
@@ -256,7 +423,22 @@ async function setupEventListeners() {
       // Legacy single-key format (raw UsageData)
       state.usageData['default'] = payload;
     }
-    render();
+    state.lastError = '';
+    scheduleUsageRender();
+  });
+
+  await tauriListen('usage-error', (event) => {
+    console.error('Usage refresh error:', event.payload);
+    if (Array.isArray(event.payload) && event.payload.length === 2) {
+      if (!hasUsableUsageData()) {
+        state.lastError = String(event.payload[1]);
+      }
+    } else {
+      if (!hasUsableUsageData()) {
+        state.lastError = String(event.payload || '');
+      }
+    }
+    scheduleUsageRender();
   });
 
   // Listen for show set key dialog event
@@ -265,36 +447,49 @@ async function setupEventListeners() {
     return;
   });
 
+  // Reset transient UI whenever the native shell is about to reveal the window.
+  await tauriListen('app-window-will-show', () => {
+    closeTransientDialogs();
+    scheduleRender();
+  });
+
   // Listen for window-hidden event - close all dialogs when window is about to hide
   await tauriListen('window-hidden', () => {
-    // Close all open dialogs and modals so they don't persist on next launch
-    const apiKeyDialog = document.getElementById('api-key-dialog');
-    const keyMgmtModal = document.getElementById('key-management-modal');
-    const keyEditDialog = document.getElementById('key-edit-dialog');
-    if (apiKeyDialog) apiKeyDialog.style.display = 'none';
-    if (keyMgmtModal) keyMgmtModal.style.display = 'none';
-    if (keyEditDialog) keyEditDialog.style.display = 'none';
+    closeTransientDialogs();
   });
 }
 
-function showStartupError(error) {
+function showStartupError(error, options = {}) {
+  const recoverable = options.recoverable !== false;
   const emptyNoKey = document.getElementById('empty-state-no-key');
   const emptyLoading = document.getElementById('empty-state-loading');
   const dashboard = document.getElementById('dashboard');
   const emptyError = document.getElementById('empty-state-error');
   const errorMsg = document.getElementById('error-message');
 
-  [emptyNoKey, emptyLoading, dashboard].forEach((el) => {
+  [emptyNoKey, emptyLoading].forEach((el) => {
     if (el) el.style.display = 'none';
   });
 
+  if (dashboard) {
+    dashboard.style.display = recoverable && state.apiKeys.length > 0 ? 'block' : 'none';
+  }
+
   if (emptyError) emptyError.style.display = 'block';
-  if (errorMsg) errorMsg.textContent = `Startup failed: ${String(error)}`;
+  if (errorMsg) {
+    errorMsg.textContent = recoverable
+      ? `启动后台连接失败，页面已进入离线模式: ${String(error)}`
+      : `Startup failed: ${String(error)}`;
+  }
 }
 
 function setupUiHandlers() {
+  if (uiHandlersInitialized) return;
+  uiHandlersInitialized = true;
   // Set API Key button
-  document.getElementById('btn-set-key')?.addEventListener('click', showApiKeyDialog);
+  document.getElementById('btn-set-key')?.addEventListener('click', (e) => {
+    runTrustedModalAction(e, showApiKeyDialog);
+  });
 
   // Retry sync button
   document.getElementById('btn-retry-sync')?.addEventListener('click', refreshAllUsage);
@@ -303,13 +498,17 @@ function setupUiHandlers() {
   document.getElementById('btn-reconnect')?.addEventListener('click', refreshAllUsage);
 
   // Edit key button
-  document.getElementById('btn-edit-key')?.addEventListener('click', showApiKeyDialog);
+  document.getElementById('btn-edit-key')?.addEventListener('click', (e) => {
+    runTrustedModalAction(e, showApiKeyDialog);
+  });
 
   // Refresh button
   document.getElementById('btn-refresh')?.addEventListener('click', refreshAllUsage);
 
   // Config key button
-  document.getElementById('btn-config-key')?.addEventListener('click', showKeyManagementModal);
+  document.getElementById('btn-config-key')?.addEventListener('click', (e) => {
+    runTrustedModalAction(e, showKeyManagementModal);
+  });
 
   // Clear cache button
   document.getElementById('btn-clear-cache')?.addEventListener('click', clearApiKey);
@@ -336,11 +535,13 @@ function setupUiHandlers() {
   });
 
   // Key management modal handlers
-  document.getElementById('btn-add-key-modal')?.addEventListener('click', () => openKeyEditDialog());
+  document.getElementById('btn-add-key-modal')?.addEventListener('click', (e) => {
+    runTrustedModalAction(e, () => openKeyEditDialog());
+  });
   document.getElementById('btn-save-key-edit')?.addEventListener('click', saveKeyEdit);
   document.getElementById('btn-cancel-key-edit')?.addEventListener('click', closeKeyEditDialog);
   document.getElementById('btn-close-modal')?.addEventListener('click', () => {
-    document.getElementById('key-management-modal').style.display = 'none';
+    setDialogVisibility('key-management-modal', false);
   });
 
   // Key edit dialog overlay click
@@ -349,30 +550,79 @@ function setupUiHandlers() {
       closeKeyEditDialog();
     }
   });
+
+  document.getElementById('key-list')?.addEventListener('click', (e) => {
+    if (!e.isTrusted) return;
+    const editBtn = e.target.closest('.js-edit-key');
+    if (editBtn) {
+      const keyId = editBtn.getAttribute('data-key-id');
+      withUserModalIntent(() => openKeyEditDialog(keyId));
+      return;
+    }
+    const deleteBtn = e.target.closest('.js-delete-key');
+    if (deleteBtn) {
+      const keyId = deleteBtn.getAttribute('data-key-id');
+      deleteKey(keyId);
+    }
+  });
 }
 
 async function refreshAllUsage() {
   if (!tauriInvoke || state.apiKeys.length === 0 || state.isLoading) return;
 
+  const hadUsageData = Object.keys(state.usageData).length > 0;
   state.isLoading = true;
-  render();
+  scheduleRender();
 
   try {
-    // Fetch usage data for all keys - backend handles per-key refresh via events
-    // Frontend just needs to reload the full HashMap
-    const allData = await tauriInvoke('cmd_get_all_usage_data');
+    // Force backend to fetch latest data from API, then return refreshed HashMap.
+    const allData = await invokeWithTimeout(
+      'cmd_refresh_all_usage_data',
+      undefined,
+      REFRESH_IPC_TIMEOUT_MS,
+    );
     state.usageData = allData || {};
-    render();
+    state.lastError = '';
+    scheduleRender();
   } catch (error) {
     console.error('Fetch error:', error);
-    // Mark all keys as error state
-    state.apiKeys.forEach(key => {
-      state.usageData[key.id] = { ok: false, status_label: String(error) };
-    });
-    render();
+    if (!hasUsableUsageData()) {
+      state.lastError = String(error);
+    }
+    if (!hadUsageData) {
+      state.apiKeys.forEach(key => {
+        state.usageData[key.id] = makeErrorUsageData(String(error));
+      });
+    }
+    scheduleRender();
   } finally {
     state.isLoading = false;
+    scheduleRender();
   }
+}
+
+function makeErrorUsageData(message) {
+  return {
+    ok: false,
+    status_label: message || 'Unknown error',
+    primary_model_name: '',
+    time_window: '',
+    reset_timestamp: null,
+    reset_in_label: '',
+    total_count: null,
+    remaining_count: null,
+    used_count: null,
+    used_percent: null,
+    weekly_total_count: null,
+    weekly_used_count: null,
+    weekly_remaining_count: null,
+    weekly_used_percent: null,
+    weekly_reset_timestamp: null,
+    weekly_reset_in_label: '',
+    interval_label: '',
+    models: [],
+    last_updated: new Date().toLocaleString(),
+  };
 }
 
 async function saveApiKey() {
@@ -385,17 +635,18 @@ async function saveApiKey() {
 
   try {
     // Use cmd_add_api_key for multi-key support
-    await tauriInvoke('cmd_add_api_key', {
+    await invokeWithTimeout('cmd_add_api_key', {
       name: 'Key ' + (state.apiKeys.length + 1),
       color: '#00d4ff',
       api_key: apiKey,
       refresh_interval: settings.refresh_interval_seconds || 20
-    });
+    }, WRITE_IPC_TIMEOUT_MS);
     hideApiKeyDialog();
     await loadApiKeys();
-    await refreshAllUsage();
+    runInBackground('refresh after saving API key', refreshAllUsage);
   } catch (error) {
     console.error('Save API key error:', error);
+    alert(state.language === 'zh-CN' ? '保存失败: ' + error : 'Failed to save: ' + error);
   }
 }
 
@@ -407,17 +658,18 @@ async function clearApiKey() {
   try {
     // Delete all keys
     for (const key of state.apiKeys) {
-      await tauriInvoke('cmd_delete_api_key', { id: key.id });
+      await invokeWithTimeout('cmd_delete_api_key', { id: key.id }, WRITE_IPC_TIMEOUT_MS);
     }
     state.apiKeys = [];
     state.usageData = {};
-    render();
+    scheduleRender();
   } catch (error) {
     console.error('Clear API key error:', error);
   }
 }
 
 function showApiKeyDialog() {
+  if (!canOpenTransientDialog()) return;
   // Guard: if init() hasn't completed yet, do nothing
   // (state.config is null before init finishes loading config and keys)
   if (state.config === null) {
@@ -431,7 +683,7 @@ function showApiKeyDialog() {
   const dialog = document.getElementById('api-key-dialog');
   const input = document.getElementById('api-key-input');
   if (dialog) {
-    dialog.style.display = 'flex';
+    setDialogVisibility('api-key-dialog', true);
     if (input) {
       input.value = '';
       input.focus();
@@ -440,10 +692,7 @@ function showApiKeyDialog() {
 }
 
 function hideApiKeyDialog() {
-  const dialog = document.getElementById('api-key-dialog');
-  if (dialog) {
-    dialog.style.display = 'none';
-  }
+  setDialogVisibility('api-key-dialog', false);
 }
 
 async function toggleLanguage() {
@@ -454,28 +703,33 @@ async function toggleLanguage() {
   // Save preference
   try {
     const newConfig = { ...state.config, language: state.language };
-    await tauriInvoke('cmd_save_config', { config: newConfig });
+    await invokeWithTimeout('cmd_save_config', { config: newConfig }, WRITE_IPC_TIMEOUT_MS);
     state.config = newConfig;
   } catch (error) {
     console.error('Save language error:', error);
   }
 
   applyI18n();
-  render();
+  scheduleRender();
 }
 
 async function loadSettings() {
   if (!tauriInvoke) return;
 
   try {
-    const config = await tauriInvoke('cmd_get_config');
+    const config = await invokeWithTimeout('cmd_get_config', undefined, SETTINGS_IPC_TIMEOUT_MS);
     settings.refresh_interval_seconds = normalizeRefreshIntervalSeconds(config.refresh_interval_seconds);
     settings.start_minimized = config.start_minimized || false;
     settings.enable_notifications = config.enable_notifications !== false;
     settings.show_percent_in_tray = config.show_percent_in_tray !== false;
 
     // Load autostart status
-    settings.autostart = await tauriInvoke('cmd_get_autostart');
+    settings.autostart = await invokeOrFallback(
+      'cmd_get_autostart',
+      undefined,
+      false,
+      SETTINGS_IPC_TIMEOUT_MS,
+    );
 
     // Update UI
     const startMinimizedEl = document.getElementById('setting-start-minimized');
@@ -490,42 +744,55 @@ async function loadSettings() {
     if (notificationsEl) notificationsEl.checked = settings.enable_notifications;
     if (showPercentInTrayEl) showPercentInTrayEl.checked = settings.show_percent_in_tray;
 
-    // Add event listeners
-    startMinimizedEl?.addEventListener('change', (e) => {
-      saveSetting('start_minimized', e.target.checked);
-    });
-
-    autostartEl?.addEventListener('change', (e) => {
-      saveAutostart(e.target.checked);
-    });
-
-    notificationsEl?.addEventListener('change', (e) => {
-      saveSetting('enable_notifications', e.target.checked);
-    });
-
-    showPercentInTrayEl?.addEventListener('change', (e) => {
-      saveSetting('show_percent_in_tray', e.target.checked);
-    });
-
-    refreshIntervalEl?.addEventListener('change', async (e) => {
-      const normalized = normalizeRefreshIntervalSeconds(e.target.value);
-      e.target.value = String(normalized);
-      await saveSetting('refresh_interval_seconds', normalized);
-      restartAutoRefreshTimer();
-    });
+    attachSettingsHandlers();
   } catch (error) {
     console.error('Load settings error:', error);
   }
+}
+
+function attachSettingsHandlers() {
+  if (settingsHandlersInitialized) return;
+  settingsHandlersInitialized = true;
+
+  const startMinimizedEl = document.getElementById('setting-start-minimized');
+  const autostartEl = document.getElementById('setting-autostart');
+  const notificationsEl = document.getElementById('setting-notifications');
+  const showPercentInTrayEl = document.getElementById('setting-show-percent-in-tray');
+  const refreshIntervalEl = document.getElementById('setting-refresh-interval');
+
+  startMinimizedEl?.addEventListener('change', (e) => {
+    saveSetting('start_minimized', e.target.checked);
+  });
+
+  autostartEl?.addEventListener('change', (e) => {
+    saveAutostart(e.target.checked);
+  });
+
+  notificationsEl?.addEventListener('change', (e) => {
+    saveSetting('enable_notifications', e.target.checked);
+  });
+
+  showPercentInTrayEl?.addEventListener('change', (e) => {
+    saveSetting('show_percent_in_tray', e.target.checked);
+  });
+
+  refreshIntervalEl?.addEventListener('change', async (e) => {
+    const normalized = normalizeRefreshIntervalSeconds(e.target.value);
+    e.target.value = String(normalized);
+    await saveSetting('refresh_interval_seconds', normalized);
+    restartAutoRefreshTimer();
+  });
 }
 
 async function saveSetting(key, value) {
   if (!tauriInvoke) return;
 
   try {
-    const config = await tauriInvoke('cmd_get_config');
+    const config = await invokeWithTimeout('cmd_get_config', undefined, SETTINGS_IPC_TIMEOUT_MS);
     config[key] = value;
-    await tauriInvoke('cmd_save_config', { config });
+    await invokeWithTimeout('cmd_save_config', { config }, WRITE_IPC_TIMEOUT_MS);
     settings[key] = value;
+    state.config = { ...state.config, ...config };
   } catch (error) {
     console.error('Save setting error:', error);
   }
@@ -541,7 +808,7 @@ async function saveAutostart(enabled) {
   if (!tauriInvoke) return;
 
   try {
-    await tauriInvoke('cmd_set_autostart', { enabled });
+    await invokeWithTimeout('cmd_set_autostart', { enabled }, WRITE_IPC_TIMEOUT_MS);
     settings.autostart = enabled;
   } catch (error) {
     console.error('Save autostart error:', error);
@@ -572,54 +839,29 @@ function applyI18n() {
 }
 
 function render() {
-  console.log('[DEBUG render] state.apiKeys:', state.apiKeys.length);
-
   const emptyNoKey = document.getElementById('empty-state-no-key');
   const emptyLoading = document.getElementById('empty-state-loading');
   const emptyError = document.getElementById('empty-state-error');
   const dashboard = document.getElementById('dashboard');
-  const apiKeyDialog = document.getElementById('api-key-dialog');
-
   // Hide all states
-  [emptyNoKey, emptyLoading, emptyError, dashboard, apiKeyDialog].forEach(el => {
-    if (el) el.style.display = 'none';
-  });
+  setElementDisplay(emptyNoKey, 'none');
+  setElementDisplay(emptyLoading, 'none');
+  setElementDisplay(emptyError, 'none');
+  setElementDisplay(dashboard, 'none');
+  setDialogVisibility('api-key-dialog', false);
+
+  if (state.isBooting) {
+    setElementDisplay(emptyLoading, 'block');
+    return;
+  }
 
   if (state.apiKeys.length === 0) {
-    console.log('[DEBUG render] Showing empty-state-no-key');
-    if (emptyNoKey) emptyNoKey.style.display = 'block';
-    return;
-  }
-
-  if (state.isLoading && Object.keys(state.usageData).length === 0) {
-    console.log('[DEBUG render] Showing empty-state-loading');
-    if (emptyLoading) emptyLoading.style.display = 'block';
-    return;
-  }
-
-  // Check if all keys have errors
-  const allHaveError = state.apiKeys.every(key => {
-    const data = state.usageData[key.id];
-    return data && !data.ok;
-  });
-
-  if (allHaveError && state.apiKeys.length > 0) {
-    console.log('[DEBUG render] Showing empty-state-error');
-    if (emptyError) {
-      emptyError.style.display = 'block';
-      const errorMsg = document.getElementById('error-message');
-      if (errorMsg) {
-        // Show error from first key
-        const firstKeyData = state.usageData[state.apiKeys[0].id];
-        errorMsg.textContent = firstKeyData?.status_label || 'Unknown error';
-      }
-    }
+    setElementDisplay(emptyNoKey, 'block');
     return;
   }
 
   // Render dashboard
-  console.log('[DEBUG render] Showing dashboard');
-  if (dashboard) dashboard.style.display = 'block';
+  setElementDisplay(dashboard, 'block');
   renderDashboard();
 }
 
@@ -646,7 +888,11 @@ function renderDashboard() {
 
   // Header info
   setText('primary-model', primaryModelName || t('unknown'));
-  setText('interval-label', intervalLabel || t('na'));
+  const hasAnyUsage = Object.keys(state.usageData).length > 0;
+  const statusLabel = state.lastError && !hasData
+    ? t('syncUnavailable')
+    : (state.isLoading && !hasData ? t('waitingData') : t('na'));
+  setText('interval-label', intervalLabel || statusLabel);
 
   // Current interval aggregate
   const currentPercent = totalCount > 0 ? (totalUsed / totalCount) * 100 : 0;
@@ -670,7 +916,7 @@ function renderDashboard() {
   });
   if (earliestReset > 0) {
     const timerEl = document.getElementById('window-countdown');
-    if (timerEl) timerEl.setAttribute('data-timestamp', String(earliestReset));
+    setElementAttr(timerEl, 'data-timestamp', earliestReset);
   }
 
   // Weekly interval aggregate (use first key's weekly data for now)
@@ -710,7 +956,7 @@ function renderDashboard() {
   });
   if (earliestWeeklyReset > 0) {
     const timerEl = document.getElementById('weekly-countdown');
-    if (timerEl) timerEl.setAttribute('data-timestamp', String(earliestWeeklyReset));
+    setElementAttr(timerEl, 'data-timestamp', earliestWeeklyReset);
   }
 
   // Risk alert - show if any key is at risk
@@ -722,19 +968,28 @@ function renderDashboard() {
 
   if (anyKeyAtRisk) {
     if (riskCard) {
-      riskCard.style.display = 'flex';
-      riskCard.className = `cyber-card risk-alert ${currentStatus}`;
+      setElementDisplay(riskCard, 'flex');
+      setElementClass(riskCard, `cyber-card risk-alert ${currentStatus}`);
       setText('risk-remaining-percent', String(Math.round(100 - currentPercent)));
       const riskMsg = document.getElementById('risk-message');
       if (riskMsg) {
-        riskMsg.setAttribute('data-i18n', currentPercent >= 90 ? 'riskExhausted' : 'riskFast');
-        riskMsg.textContent = t(currentPercent >= 90 ? 'riskExhausted' : 'riskFast');
+        const riskKey = currentPercent >= 90 ? 'riskExhausted' : 'riskFast';
+        setElementAttr(riskMsg, 'data-i18n', riskKey);
+        const riskText = t(riskKey);
+        if (riskMsg.textContent !== riskText) {
+          riskMsg.textContent = riskText;
+        }
       }
       const riskIcon = document.getElementById('risk-icon');
-      if (riskIcon) riskIcon.textContent = currentPercent >= 90 ? '🚨' : '⚠️';
+      if (riskIcon) {
+        const riskIconText = currentPercent >= 90 ? '🚨' : '⚠️';
+        if (riskIcon.textContent !== riskIconText) {
+          riskIcon.textContent = riskIconText;
+        }
+      }
     }
   } else {
-    if (riskCard) riskCard.style.display = 'none';
+    setElementDisplay(riskCard, 'none');
   }
 
   // Model details - combine from all keys (take first key's models for now)
@@ -750,7 +1005,7 @@ function renderDashboard() {
 
   // Last updated - use first key's timestamp
   const firstKeyData = state.apiKeys.length > 0 ? state.usageData[state.apiKeys[0].id] : null;
-  setText('last-updated', firstKeyData?.last_updated || t('na'));
+  setText('last-updated', firstKeyData?.last_updated || (state.lastError || (hasAnyUsage ? t('na') : t('waitingData'))));
 }
 
 function renderModelDetails(data) {
@@ -758,38 +1013,71 @@ function renderModelDetails(data) {
   if (!tbody) return;
 
   if (!data || !data.models || data.models.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="5" class="model-details-empty">${t('perModelEmpty')}</td></tr>`;
+    modelDetailsSignature = '';
+    const emptyRows = `<tr><td colspan="5" class="model-details-empty">${t('perModelEmpty')}</td></tr>`;
+    if (tbody.innerHTML !== emptyRows) {
+      tbody.innerHTML = emptyRows;
+      modelTableHtmlCache.set(tbody, emptyRows);
+    }
     const badge = document.getElementById('model-count-badge');
     if (badge) {
-      badge.textContent = `${t('topItems')} 0 ${t('itemsSuffix')}`;
+      const badgeText = `${t('topItems')} 0 ${t('itemsSuffix')}`;
+      if (badge.textContent !== badgeText) {
+        badge.textContent = badgeText;
+      }
     }
     return;
   }
 
   const modelLimit = Math.min(state.config?.detail_model_limit || 8, data.models.length);
 
-  const rows = data.models.slice(0, modelLimit).map(model => `
-    <tr>
-      <td class="model-cell" title="${escapeHtml(model.name)}">${escapeHtml(model.name)}</td>
-      <td class="metric-cell used">${formatNumber(model.used_count)}</td>
-      <td class="metric-cell remaining">${formatNumber(model.remaining_count)}</td>
-      <td class="metric-cell total">${formatNumber(model.total_count)}</td>
-      <td class="window-cell">${escapeHtml(model.time_window || '00:00 ~ 00:00')}</td>
-    </tr>
-  `).join('');
+  const signatureParts = [
+    String(modelLimit),
+    String(data.last_updated || ''),
+  ];
+  for (let i = 0; i < modelLimit; i += 1) {
+    const model = data.models[i];
+    signatureParts.push(
+      `${model.name}|${model.used_count}|${model.remaining_count}|${model.total_count}|${model.time_window || ''}`,
+    );
+  }
+  const nextSignature = signatureParts.join('||');
+  const modelDataChanged = nextSignature !== modelDetailsSignature;
+  modelDetailsSignature = nextSignature;
 
-  tbody.innerHTML = rows;
+  if (modelDataChanged) {
+    const rows = data.models.slice(0, modelLimit).map(model => `
+      <tr>
+        <td class="model-cell" title="${escapeHtml(model.name)}">${escapeHtml(model.name)}</td>
+        <td class="metric-cell used">${formatNumber(model.used_count)}</td>
+        <td class="metric-cell remaining">${formatNumber(model.remaining_count)}</td>
+        <td class="metric-cell total">${formatNumber(model.total_count)}</td>
+        <td class="window-cell">${escapeHtml(model.time_window || '00:00 ~ 00:00')}</td>
+      </tr>
+    `).join('');
+
+    if (modelTableHtmlCache.get(tbody) !== rows) {
+      tbody.innerHTML = rows;
+      modelTableHtmlCache.set(tbody, rows);
+    }
+  }
 
   // Update badge
   const badge = document.getElementById('model-count-badge');
   if (badge) {
-    badge.textContent = `${t('topItems')} ${modelLimit} ${t('itemsSuffix')}`;
+    const badgeText = `${t('topItems')} ${modelLimit} ${t('itemsSuffix')}`;
+    if (badge.textContent !== badgeText) {
+      badge.textContent = badgeText;
+    }
   }
 
   // Update timestamp
   const updated = document.getElementById('model-updated');
   if (updated) {
-    updated.textContent = `${t('modelDetails')}${t('unknown')}: ${data.last_updated || t('na')}`;
+    const updatedText = `${t('modelDetails')}${t('unknown')}: ${data.last_updated || t('na')}`;
+    if (updated.textContent !== updatedText) {
+      updated.textContent = updatedText;
+    }
   }
 }
 
@@ -797,10 +1085,13 @@ function updateProgressBar(cardId, progressId, percent, status) {
   const card = document.getElementById(cardId);
   const progress = document.getElementById(progressId);
 
-  if (card) card.className = `cyber-card ${status}`;
+  setElementClass(card, `cyber-card ${status}`);
   if (progress) {
-    progress.style.width = `${percent}%`;
-    progress.className = `progress-thumb ${status === 'secondary' ? 'secondary' : ''} ${status}`;
+    const width = `${percent}%`;
+    if (progress.style.width !== width) {
+      progress.style.width = width;
+    }
+    setElementClass(progress, `progress-thumb ${status === 'secondary' ? 'secondary' : ''} ${status}`);
   }
 }
 
@@ -808,12 +1099,8 @@ function updateRemainingBreath(valueId, wrapperId, status) {
   const valueEl = document.getElementById(valueId);
   const wrapper = document.getElementById(wrapperId);
 
-  if (valueEl) {
-    valueEl.className = `data-value success remaining-breath ${status}`;
-  }
-  if (wrapper) {
-    wrapper.className = `data-item breathing-metric ${status}`;
-  }
+  setElementClass(valueEl, `data-value success remaining-breath ${status}`);
+  setElementClass(wrapper, `data-item breathing-metric ${status}`);
 }
 
 const flipTimers = new WeakMap();
@@ -840,8 +1127,17 @@ function setFlipNumber(containerId, valueId, nextValue) {
   if (!previous) return;
 
   container.classList.remove('flipping');
-  void container.offsetWidth;
-  container.classList.add('flipping');
+  if (typeof window.requestAnimationFrame === 'function') {
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        container.classList.add('flipping');
+      });
+    });
+  } else {
+    setTimeout(() => {
+      container.classList.add('flipping');
+    }, 0);
+  }
 
   const timer = flipTimers.get(container);
   if (timer) clearTimeout(timer);
@@ -853,7 +1149,11 @@ function setFlipNumber(containerId, valueId, nextValue) {
 
 function setText(id, value) {
   const el = document.getElementById(id);
-  if (el) el.textContent = value;
+  if (!el) return;
+  const next = String(value);
+  if (el.textContent !== next) {
+    el.textContent = next;
+  }
 }
 
 function formatNumber(value) {
@@ -884,14 +1184,27 @@ function escapeHtml(value) {
 
 let countdownInterval = null;
 let autoRefreshInterval = null;
+const countdownTargets = [];
+
+function syncCountdownTargets() {
+  countdownTargets.length = 0;
+  const windowCountdownEl = document.getElementById('window-countdown');
+  const weeklyCountdownEl = document.getElementById('weekly-countdown');
+  if (windowCountdownEl) countdownTargets.push(windowCountdownEl);
+  if (weeklyCountdownEl) countdownTargets.push(weeklyCountdownEl);
+}
 
 function startCountdownTimer() {
   if (countdownInterval) clearInterval(countdownInterval);
+  syncCountdownTargets();
   countdownInterval = setInterval(() => {
-    document.querySelectorAll('.timer-value[data-timestamp]').forEach((el) => {
+    countdownTargets.forEach((el) => {
       const ts = parseInt(el.getAttribute('data-timestamp'), 10);
       if (ts > 0) {
-        el.textContent = formatCountdown(ts);
+        const nextText = formatCountdown(ts);
+        if (el.textContent !== nextText) {
+          el.textContent = nextText;
+        }
       }
     });
   }, 1000);
@@ -911,7 +1224,7 @@ function restartAutoRefreshTimer() {
 async function loadApiKeys() {
   if (!tauriInvoke) return;
   try {
-    const keys = await tauriInvoke('cmd_get_api_keys');
+    const keys = await invokeWithTimeout('cmd_get_api_keys', undefined, BOOT_IPC_TIMEOUT_MS);
     state.apiKeys = keys || [];
   } catch (e) {
     console.error('Failed to load API keys:', e);
@@ -922,7 +1235,7 @@ async function loadApiKeys() {
 async function loadAllUsageData() {
   if (!tauriInvoke) return;
   try {
-    const allData = await tauriInvoke('cmd_get_all_usage_data');
+    const allData = await invokeWithTimeout('cmd_get_all_usage_data', undefined, BOOT_IPC_TIMEOUT_MS);
     state.usageData = allData || {};
   } catch (e) {
     console.error('Failed to load usage data:', e);
@@ -932,11 +1245,13 @@ async function loadAllUsageData() {
 
 // Key management modal functions
 function showKeyManagementModal() {
+  if (!canOpenTransientDialog()) return;
   const modal = document.getElementById('key-management-modal');
   if (!modal) return;
 
+  closeTransientDialogs();
   renderKeyList();
-  modal.style.display = 'flex';
+  setDialogVisibility('key-management-modal', true);
 }
 
 function renderKeyList() {
@@ -959,14 +1274,15 @@ function renderKeyList() {
         <span class="key-color-dot" style="background: ${key.color}; width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;"></span>
         <span class="key-name">${escapeHtml(key.name)}</span>
         <span class="key-interval">${key.refresh_interval}s</span>
-        <button onclick="openKeyEditDialog('${key.id}')">Edit</button>
-        <button class="danger" onclick="deleteKey('${key.id}')">Delete</button>
+        <button class="js-edit-key" data-key-id="${escapeHtml(key.id)}">Edit</button>
+        <button class="danger js-delete-key" data-key-id="${escapeHtml(key.id)}">Delete</button>
       </div>
     `;
   }).join('');
 }
 
 function openKeyEditDialog(keyId = null) {
+  if (!canOpenTransientDialog()) return;
   const dialog = document.getElementById('key-edit-dialog');
   const title = document.getElementById('key-edit-title');
   const idInput = document.getElementById('key-edit-id');
@@ -998,12 +1314,22 @@ function openKeyEditDialog(keyId = null) {
     apiKeyInput.placeholder = 'API Key';
   }
 
-  dialog.style.display = 'flex';
+  setDialogVisibility('key-edit-dialog', true);
 }
 
 function closeKeyEditDialog() {
-  document.getElementById('key-edit-dialog').style.display = 'none';
+  setDialogVisibility('key-edit-dialog', false);
 }
+
+window.addEventListener('focus', () => {
+  closeTransientDialogs();
+});
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    closeTransientDialogs();
+  }
+});
 
 async function saveKeyEdit() {
   const id = document.getElementById('key-edit-id').value;
@@ -1019,23 +1345,24 @@ async function saveKeyEdit() {
 
   try {
     if (id) {
-      await tauriInvoke('cmd_update_api_key', {
+      await invokeWithTimeout('cmd_update_api_key', {
         id, name, color, refresh_interval: interval, api_key: apiKey || null
-      });
+      }, WRITE_IPC_TIMEOUT_MS);
     } else {
       if (!apiKey) {
         alert(state.language === 'zh-CN' ? 'Please enter an API key' : 'Please enter an API key');
         return;
       }
-      await tauriInvoke('cmd_add_api_key', {
+      await invokeWithTimeout('cmd_add_api_key', {
         name, color, api_key: apiKey, refresh_interval: interval
-      });
+      }, WRITE_IPC_TIMEOUT_MS);
     }
     closeKeyEditDialog();
     await loadApiKeys();
     await loadAllUsageData();
     renderKeyList();
-    render();
+    scheduleRender();
+    runInBackground('refresh after key edit', refreshAllUsage);
   } catch (e) {
     alert(state.language === 'zh-CN' ? 'Failed to save: ' + e : 'Failed to save: ' + e);
   }
@@ -1044,11 +1371,11 @@ async function saveKeyEdit() {
 async function deleteKey(keyId) {
   if (!confirm(state.language === 'zh-CN' ? 'Delete this API key?' : 'Delete this API key?')) return;
   try {
-    await tauriInvoke('cmd_delete_api_key', { id: keyId });
+    await invokeWithTimeout('cmd_delete_api_key', { id: keyId }, WRITE_IPC_TIMEOUT_MS);
     await loadApiKeys();
     await loadAllUsageData();
     renderKeyList();
-    render();
+    scheduleRender();
   } catch (e) {
     alert(state.language === 'zh-CN' ? 'Failed to delete: ' + e : 'Failed to delete: ' + e);
   }
@@ -1068,30 +1395,8 @@ function formatCountdown(timestamp) {
 }
 
 // Initialize on DOM ready
-console.log('[DEBUG] readyState:', document.readyState);
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
+  document.addEventListener('DOMContentLoaded', init);
 } else {
-    console.log('[DEBUG] DOM already loaded, calling init directly');
-    init();
+  init();
 }
-
-// Global error handler
-window.onerror = function(msg, url, line, col, error) {
-    console.error('[GLOBAL ERROR]', msg, 'at line', line, 'col', col);
-    return false;
-};
-
-// Ping test
-setInterval(async () => {
-    if (window.__TAURI__) {
-        try {
-            const result = await window.__TAURI__.core.invoke('cmd_debug_state');
-            console.log('[PING]', result);
-        } catch (e) {
-            console.log('[PING ERROR]', e);
-        }
-    } else {
-        console.log('[PING] Tauri not ready');
-    }
-}, 5000);

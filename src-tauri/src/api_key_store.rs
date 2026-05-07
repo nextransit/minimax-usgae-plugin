@@ -275,10 +275,14 @@ pub fn load_key_for_entry(entry: &ApiKeyEntry) -> Option<String> {
         let path = config_dir()
             .ok()?
             .join(format!("key_{}.fallback", entry.id));
-        fs::read_to_string(path).ok()?.trim().to_string().into()
+        let key = fs::read_to_string(path).ok()?.trim().to_string();
+        if key.is_empty() {
+            None
+        } else {
+            Some(key)
+        }
     } else {
-        let entry = keyring::Entry::new(&entry.keychain_service, &entry.keychain_account)
-            .ok()?;
+        let entry = keyring::Entry::new(&entry.keychain_service, &entry.keychain_account).ok()?;
         entry.get_password().ok()
     }
 }

@@ -1,5 +1,6 @@
 use crate::state::{ApiKeyEntry, AppConfig, AppState, UsageData};
-use tauri::{AppHandle, State};
+use std::collections::HashMap;
+use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_autostart::ManagerExt;
 
 #[tauri::command]
@@ -7,7 +8,11 @@ pub fn cmd_debug_state(state: State<AppState>) -> String {
     let api_key = state.api_key.lock().unwrap();
     let has_key = api_key.is_some();
     let key_len = api_key.as_ref().map(|k| k.len()).unwrap_or(0);
-    log::debug!("cmd_debug_state called, returning: has_api_key: {}, key_length: {}", has_key, key_len);
+    log::debug!(
+        "cmd_debug_state called, returning: has_api_key: {}, key_length: {}",
+        has_key,
+        key_len
+    );
     format!("has_api_key: {}, key_length: {}", has_key, key_len)
 }
 
@@ -17,7 +22,11 @@ pub fn cmd_get_config(state: State<AppState>) -> AppConfig {
 }
 
 #[tauri::command]
-pub fn cmd_save_config(app: AppHandle, state: State<AppState>, config: AppConfig) -> Result<(), String> {
+pub fn cmd_save_config(
+    app: AppHandle,
+    state: State<AppState>,
+    config: AppConfig,
+) -> Result<(), String> {
     {
         let mut current = state.config.lock().unwrap();
         *current = config.clone();
@@ -30,7 +39,11 @@ pub fn cmd_save_config(app: AppHandle, state: State<AppState>, config: AppConfig
 #[tauri::command]
 pub fn cmd_get_api_key(state: State<AppState>) -> Option<String> {
     let key = state.api_key.lock().unwrap().clone();
-    log::debug!("cmd_get_api_key returning: {:?} (is_some: {})", key, key.is_some());
+    log::debug!(
+        "cmd_get_api_key returning: {:?} (is_some: {})",
+        key,
+        key.is_some()
+    );
     key
 }
 
@@ -54,6 +67,16 @@ pub fn cmd_clear_api_key(app: AppHandle, state: State<'_, AppState>) -> Result<(
         *api_key = None;
     }
     {
+        let entries = state.config.lock().unwrap().api_keys.clone();
+        for entry in &entries {
+            crate::api_key_store::delete_key_for_entry(entry)?;
+        }
+
+        let mut config = state.config.lock().unwrap();
+        config.api_keys.clear();
+        crate::config::save_config(&config).map_err(|e| e.to_string())?;
+    }
+    {
         let mut usage = state.usage_data.lock().unwrap();
         usage.clear();
     }
@@ -69,7 +92,12 @@ pub async fn cmd_fetch_usage(api_key: String, timeout_ms: u64) -> Result<UsageDa
 }
 
 #[tauri::command]
-pub fn cmd_update_usage_data(app: AppHandle, state: State<'_, AppState>, key_id: String, data: UsageData) {
+pub fn cmd_update_usage_data(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    key_id: String,
+    data: UsageData,
+) {
     {
         let mut usage = state.usage_data.lock().unwrap();
         usage.insert(key_id, data);
@@ -116,7 +144,12 @@ pub async fn cmd_add_api_key(
     refresh_interval: u32,
 ) -> Result<ApiKeyEntry, String> {
     // Validate key first
-    let test_result = crate::api::fetch_minimax_usage(&api_key, 10000).await;
+    let test_result = tokio::time::timeout(
+        std::time::Duration::from_secs(12),
+        crate::api::fetch_minimax_usage(&api_key, 10000),
+    )
+    .await
+    .map_err(|_| "API key validation timed out".to_string())?;
     if test_result.is_err() {
         return Err("Invalid API key: could not fetch usage data".to_string());
     }
@@ -159,12 +192,19 @@ pub fn cmd_update_api_key(
     api_key: Option<String>,
 ) -> Result<(), String> {
     // If updating the key itself, extract keychain info first (must borrow before lock is released)
-    let keychain_update = api_key.as_ref().map(|new_key| {
-        let config = state.config.lock().unwrap();
-        config.api_keys.iter()
-            .find(|e| e.id == id)
-            .map(|e| (e.keychain_service.clone(), e.keychain_account.clone(), new_key.clone()))
-    }).flatten();
+    let keychain_update = api_key
+        .as_ref()
+        .map(|new_key| {
+            let config = state.config.lock().unwrap();
+            config.api_keys.iter().find(|e| e.id == id).map(|e| {
+                (
+                    e.keychain_service.clone(),
+                    e.keychain_account.clone(),
+                    new_key.clone(),
+                )
+            })
+        })
+        .flatten();
 
     let mut config = state.config.lock().unwrap();
     if let Some(entry) = config.api_keys.iter_mut().find(|e| e.id == id) {
@@ -211,6 +251,14 @@ pub fn cmd_delete_api_key(
         {
             let mut config = state.config.lock().unwrap();
             config.api_keys.retain(|e| e.id != id);
+            if config.api_keys.is_empty() {
+                if let Err(e) = crate::api_key_store::clear_api_key() {
+                    log::warn!(
+                        "Failed to clear legacy API key after deleting last key: {}",
+                        e
+                    );
+                }
+            }
             crate::config::save_config(&config).map_err(|e| e.to_string())?;
         }
 
@@ -226,9 +274,13 @@ pub fn cmd_delete_api_key(
 
 #[tauri::command]
 pub async fn cmd_test_api_key(api_key: String) -> Result<UsageData, String> {
-    crate::api::fetch_minimax_usage(&api_key, 10000)
-        .await
-        .map_err(|e| e.to_string())
+    tokio::time::timeout(
+        std::time::Duration::from_secs(12),
+        crate::api::fetch_minimax_usage(&api_key, 10000),
+    )
+    .await
+    .map_err(|_| "API key test timed out".to_string())?
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -259,6 +311,138 @@ pub fn cmd_get_usage_for_key(state: State<'_, AppState>, key_id: String) -> Opti
 }
 
 #[tauri::command]
-pub fn cmd_get_all_usage_data(state: State<'_, AppState>) -> std::collections::HashMap<String, UsageData> {
+pub fn cmd_get_all_usage_data(
+    state: State<'_, AppState>,
+) -> std::collections::HashMap<String, UsageData> {
     state.usage_data.lock().unwrap().clone()
+}
+
+#[tauri::command]
+pub async fn cmd_refresh_all_usage_data(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<HashMap<String, UsageData>, String> {
+    const FETCH_TIMEOUT_MS: u64 = 15_000;
+    const COMMAND_TIMEOUT_MS: u64 = FETCH_TIMEOUT_MS + 2_000;
+
+    let active_entries = {
+        let config = state.config.lock().unwrap();
+        config
+            .api_keys
+            .iter()
+            .filter(|entry| entry.is_active)
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+
+    if active_entries.is_empty() {
+        let usage = state.usage_data.lock().unwrap().clone();
+        return Ok(usage);
+    }
+
+    let mut tasks = Vec::new();
+    let mut skipped_in_flight = 0usize;
+
+    for entry in active_entries {
+        let key_id = entry.id.clone();
+        {
+            let mut in_flight = state.in_flight_refresh_keys.lock().unwrap();
+            if !in_flight.insert(key_id.clone()) {
+                skipped_in_flight += 1;
+                continue;
+            }
+        }
+
+        let task_key_id = key_id.clone();
+        let task = tauri::async_runtime::spawn(async move {
+            let api_key = crate::api_key_store::load_key_for_entry(&entry);
+            let fetch_result = match api_key {
+                Some(key) => {
+                    match tokio::time::timeout(
+                        std::time::Duration::from_millis(COMMAND_TIMEOUT_MS),
+                        crate::api::fetch_minimax_usage(&key, FETCH_TIMEOUT_MS),
+                    )
+                    .await
+                    {
+                        Ok(result) => result.map_err(|e| e.to_string()),
+                        Err(_) => Err("Usage fetch timed out".to_string()),
+                    }
+                }
+                None => Err("API key not found in keychain".to_string()),
+            };
+            (key_id, fetch_result)
+        });
+        tasks.push((task_key_id, task));
+    }
+
+    if tasks.is_empty() {
+        return Ok(state.usage_data.lock().unwrap().clone());
+    }
+
+    let mut changed = false;
+    let mut success_count = 0usize;
+    let mut failures = Vec::new();
+    for (task_key_id, task) in tasks {
+        let (key_id, fetch_result) = match task.await {
+            Ok(result) => result,
+            Err(e) => {
+                let mut in_flight = state.in_flight_refresh_keys.lock().unwrap();
+                in_flight.remove(&task_key_id);
+                let err_msg = format!("Usage refresh task join failed: {}", e);
+                log::warn!("{}", err_msg);
+                failures.push((task_key_id, err_msg));
+                continue;
+            }
+        };
+
+        {
+            let mut in_flight = state.in_flight_refresh_keys.lock().unwrap();
+            in_flight.remove(&key_id);
+        }
+
+        match fetch_result {
+            Ok(data) => {
+                {
+                    let mut usage = state.usage_data.lock().unwrap();
+                    usage.insert(key_id.clone(), data.clone());
+                }
+                log::info!(
+                    "Manual usage refresh succeeded for key {}: ok={}, model={}, updated={}",
+                    key_id,
+                    data.ok,
+                    data.primary_model_name.as_str(),
+                    data.last_updated.as_str()
+                );
+                let _ = app.emit("usage-updated", (&key_id, data));
+                changed = true;
+                success_count += 1;
+            }
+            Err(err_msg) => {
+                log::warn!("Usage refresh failed for key {}: {}", key_id, err_msg);
+                let _ = app.emit("usage-error", (&key_id, err_msg.clone()));
+                failures.push((key_id, err_msg));
+            }
+        }
+    }
+
+    let usage = state.usage_data.lock().unwrap().clone();
+    if changed {
+        crate::tray::update_tray_menu(&app, &state);
+    }
+    if success_count == 0 && !failures.is_empty() {
+        // If a scheduled refresh is already running, or we already have usable cached
+        // data, do not make the Retry button look globally failed because of a stale
+        // key entry with missing credentials.
+        if skipped_in_flight > 0 || !usage.is_empty() {
+            return Ok(usage);
+        }
+
+        let summary = failures
+            .iter()
+            .map(|(key_id, err)| format!("{}: {}", key_id, err))
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(format!("All usage refreshes failed: {}", summary));
+    }
+    Ok(usage)
 }
