@@ -1,5 +1,7 @@
 use crate::state::{AppState, UsageData};
 use std::time::{Duration, Instant};
+#[cfg(not(target_os = "macos"))]
+use crate::tray_icon;
 use tauri::{
     image::Image,
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
@@ -152,139 +154,7 @@ fn set_tray_title_with_color(_app: &AppHandle, _tray: &TrayIcon, title: Option<&
     let _ = _tray.set_title(title);
 }
 
-#[cfg(target_os = "windows")]
-fn render_windows_status_icon(status: &str) -> Image<'static> {
-    const W: u32 = 32;
-    const H: u32 = 32;
-    let percent = parse_current_percent(status);
-    let mut rgba = vec![0u8; (W * H * 4) as usize];
-    let bg = percent.map(status_color).unwrap_or((0, 191, 255));
-
-    for y in 0..H {
-        for x in 0..W {
-            let dx = x as i32 - 16;
-            let dy = y as i32 - 16;
-            if dx * dx + dy * dy <= 15 * 15 {
-                draw_px(&mut rgba, W, x, y, bg.0, bg.1, bg.2, 255);
-            } else if dx * dx + dy * dy <= 16 * 16 {
-                draw_px(&mut rgba, W, x, y, 5, 10, 18, 220);
-            }
-        }
-    }
-
-    let label = percent
-        .map(|p| p.to_string())
-        .unwrap_or_else(|| "M".to_string());
-    draw_centered_label(&mut rgba, W, H, &label);
-
-    Image::new_owned(rgba, W, H)
-}
-
-#[cfg(target_os = "windows")]
-fn parse_current_percent(status: &str) -> Option<u8> {
-    let number = status
-        .split('%')
-        .next()
-        .unwrap_or_default()
-        .chars()
-        .filter(|ch| ch.is_ascii_digit())
-        .collect::<String>();
-    if number.is_empty() {
-        return None;
-    }
-    number.parse::<u8>().ok().map(|value| value.min(100))
-}
-
-#[cfg(target_os = "windows")]
-fn status_color(percent: u8) -> (u8, u8, u8) {
-    match percent {
-        90..=100 => (255, 46, 99),
-        70..=89 => (245, 158, 11),
-        _ => (0, 191, 255),
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn draw_centered_label(rgba: &mut [u8], width: u32, height: u32, label: &str) {
-    let chars = label.chars().collect::<Vec<_>>();
-    let scale = match chars.len() {
-        0 | 1 => 5,
-        2 => 4,
-        _ => 3,
-    };
-    let glyph_w = 3 * scale;
-    let glyph_h = 5 * scale;
-    let gap = scale;
-    let text_w = chars.len() as u32 * glyph_w + chars.len().saturating_sub(1) as u32 * gap;
-    let start_x = width.saturating_sub(text_w) / 2;
-    let start_y = height.saturating_sub(glyph_h) / 2;
-
-    for (idx, ch) in chars.iter().enumerate() {
-        let x = start_x + idx as u32 * (glyph_w + gap);
-        draw_glyph(rgba, width, x, start_y, *ch, scale);
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn draw_glyph(rgba: &mut [u8], width: u32, x: u32, y: u32, ch: char, scale: u32) {
-    let Some(rows) = glyph_rows(ch) else {
-        return;
-    };
-
-    for (row_idx, row) in rows.iter().enumerate() {
-        for (col_idx, px) in row.as_bytes().iter().enumerate() {
-            if *px != b'1' {
-                continue;
-            }
-            for sy in 0..scale {
-                for sx in 0..scale {
-                    draw_px(
-                        rgba,
-                        width,
-                        x + col_idx as u32 * scale + sx,
-                        y + row_idx as u32 * scale + sy,
-                        255,
-                        255,
-                        255,
-                        255,
-                    );
-                }
-            }
-        }
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn glyph_rows(ch: char) -> Option<[&'static str; 5]> {
-    match ch {
-        '0' => Some(["111", "101", "101", "101", "111"]),
-        '1' => Some(["010", "110", "010", "010", "111"]),
-        '2' => Some(["111", "001", "111", "100", "111"]),
-        '3' => Some(["111", "001", "111", "001", "111"]),
-        '4' => Some(["101", "101", "111", "001", "001"]),
-        '5' => Some(["111", "100", "111", "001", "111"]),
-        '6' => Some(["111", "100", "111", "101", "111"]),
-        '7' => Some(["111", "001", "010", "010", "010"]),
-        '8' => Some(["111", "101", "111", "101", "111"]),
-        '9' => Some(["111", "101", "111", "001", "111"]),
-        'M' | 'm' => Some(["101", "111", "111", "101", "101"]),
-        _ => None,
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn draw_px(rgba: &mut [u8], width: u32, x: u32, y: u32, r: u8, g: u8, b: u8, a: u8) {
-    let idx = ((y * width + x) * 4) as usize;
-    if idx + 3 >= rgba.len() {
-        return;
-    }
-    rgba[idx] = r;
-    rgba[idx + 1] = g;
-    rgba[idx + 2] = b;
-    rgba[idx + 3] = a;
-}
-
-struct TrayI18n {
+pub(crate) struct TrayI18n {
     app_name: &'static str,
     set_key_hint: &'static str,
     loading_hint: &'static str,
@@ -380,47 +250,74 @@ fn format_tray_usage(current_percent: Option<f64>, weekly_percent: Option<f64>) 
     }
 }
 
-fn tray_menu_signature(
-    config: &crate::state::AppConfig,
-    api_key_present: bool,
-    status_text: &str,
-    usage: Option<&UsageData>,
-) -> String {
-    let mut signature = String::new();
-    signature.push_str("lang=");
-    signature.push_str(&config.language);
-    signature.push_str("|show_percent=");
-    signature.push_str(if config.show_percent_in_tray {
-        "1"
-    } else {
-        "0"
-    });
-    signature.push_str("|api_key=");
-    signature.push_str(if api_key_present { "1" } else { "0" });
-    signature.push_str("|status=");
-    signature.push_str(status_text);
-
-    if let Some(data) = usage {
-        use std::fmt::Write as _;
-        let _ = write!(
-            signature,
-            "|ok={}|label={}|model={}|interval={}|remaining={:?}|weekly_remaining={:?}|updated={}|used={:?}|weekly_used={:?}",
-            data.ok,
-            data.status_label,
-            data.primary_model_name,
-            data.interval_label,
-            data.remaining_count,
-            data.weekly_remaining_count,
-            data.last_updated,
-            data.used_percent,
-            data.weekly_used_percent
-        );
-    } else {
-        signature.push_str("|usage=none");
+#[cfg(not(target_os = "macos"))]
+pub fn build_tooltip(usage: &UsageData, i18n: &TrayI18n) -> String {
+    if !usage.ok {
+        return format!("{} - {}", i18n.app_name, usage.status_label);
     }
-
-    signature
+    let mut parts = vec![i18n.app_name.to_string()];
+    if !usage.primary_model_name.is_empty() {
+        parts.push(format!("{}: {}", i18n.model_prefix, usage.primary_model_name));
+    }
+    if !usage.interval_label.is_empty() {
+        parts.push(format!("{}: {}", i18n.interval_prefix, usage.interval_label));
+    }
+    if let Some(remaining) = usage.remaining_count {
+        parts.push(format!("{}: {}", i18n.remaining_prefix, remaining));
+    }
+    if let Some(pct) = usage.used_percent {
+        parts.push(format!("Used: {:.0}%", pct));
+    }
+    if let Some(wk_remaining) = usage.weekly_remaining_count {
+        parts.push(format!("{}: {}", i18n.weekly_remaining_prefix, wk_remaining));
+    }
+    if let Some(wk_pct) = usage.weekly_used_percent {
+        parts.push(format!("Weekly Used: {:.0}%", wk_pct));
+    }
+    parts.join("\n")
 }
+
+#[cfg(target_os = "macos")]
+fn resolve_tray_icon(_app: &tauri::App, _state: &AppState) -> Option<Image<'static>> {
+    Some(render_m_icon())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn resolve_tray_icon(app: &tauri::App, state: &AppState) -> Option<Image<'static>> {
+    let (style, used_percent, ok) = {
+        let cfg = state.config.lock().unwrap();
+        let usage = state.usage_data.lock().unwrap();
+        let style = cfg.tray_icon_style.clone();
+        let (used_percent, ok) = usage
+            .as_ref()
+            .map(|d| (d.used_percent, d.ok))
+            .unwrap_or((None, false));
+        (style, used_percent, ok)
+    };
+    Some(tray_icon::render_tray_icon(&style, used_percent, ok))
+}
+
+pub fn update_tray_menu(app: &AppHandle, state: &AppState) {
+    let usage = state.usage_data.lock().unwrap();
+    let config = state.config.lock().unwrap();
+    let api_key = state.api_key.lock().unwrap();
+    let i18n = tray_i18n(&config.language);
+
+    let status_text = if let Some(ref data) = *usage {
+        build_status_text(data, config.show_percent_in_tray)
+    } else if api_key.is_none() && config.api_keys.is_empty() {
+        if config.show_percent_in_tray {
+            i18n.set_key_hint.to_string()
+        } else {
+            i18n.app_name.to_string()
+        }
+    } else {
+        if config.show_percent_in_tray {
+            i18n.loading_hint.to_string()
+        } else {
+            i18n.app_name.to_string()
+        }
+    };
 
 fn build_tray_menu(
     app: &AppHandle,
@@ -431,10 +328,22 @@ fn build_tray_menu(
 ) -> Menu<tauri::Wry> {
     let separator = PredefinedMenuItem::separator(app).unwrap();
     let quit = MenuItem::with_id(app, "quit", i18n.quit, true, None::<&str>).unwrap();
+    #[cfg(target_os = "windows")]
+    {
+        let _ = quit.set_icon(tray_icon::render_menu_icon("quit"));
+    }
     let set_key = MenuItem::with_id(app, "set_key", i18n.set_key, true, None::<&str>).unwrap();
-    let clear_key =
-        MenuItem::with_id(app, "clear_key", i18n.clear_key, true, None::<&str>).unwrap();
+    let clear_key = MenuItem::with_id(app, "clear_key", i18n.clear_key, true, None::<&str>).unwrap();
+    #[cfg(target_os = "windows")]
+    {
+        let _ = set_key.set_icon(tray_icon::render_menu_icon("set_key"));
+        let _ = clear_key.set_icon(tray_icon::render_menu_icon("clear_key"));
+    }
     let refresh = MenuItem::with_id(app, "refresh", i18n.refresh, true, None::<&str>).unwrap();
+    #[cfg(target_os = "windows")]
+    {
+        let _ = refresh.set_icon(tray_icon::render_menu_icon("refresh"));
+    }
     let toggle_show_percent = CheckMenuItem::with_id(
         app,
         "toggle_show_percent",
@@ -444,6 +353,10 @@ fn build_tray_menu(
         None::<&str>,
     )
     .unwrap();
+    #[cfg(target_os = "windows")]
+    {
+        let _ = toggle_show_percent.set_icon(tray_icon::render_menu_icon("toggle_show_percent"));
+    }
 
     let mut items: Vec<Box<dyn tauri::menu::IsMenuItem<tauri::Wry>>> = vec![
         Box::new(MenuItem::with_id(app, "status", status_text, false, None::<&str>).unwrap()),
@@ -465,6 +378,10 @@ fn build_tray_menu(
                     None::<&str>,
                 )
                 .unwrap();
+                #[cfg(target_os = "windows")]
+                {
+                    let _ = model_item.set_icon(tray_icon::render_menu_icon("model"));
+                }
                 items.insert(2, Box::new(model_item));
             }
 
@@ -477,6 +394,10 @@ fn build_tray_menu(
                     None::<&str>,
                 )
                 .unwrap();
+                #[cfg(target_os = "windows")]
+                {
+                    let _ = interval_item.set_icon(tray_icon::render_menu_icon("interval"));
+                }
                 items.insert(3, Box::new(interval_item));
             }
 
@@ -489,6 +410,10 @@ fn build_tray_menu(
                     None::<&str>,
                 )
                 .unwrap();
+                #[cfg(target_os = "windows")]
+                {
+                    let _ = remaining_item.set_icon(tray_icon::render_menu_icon("remaining"));
+                }
                 items.insert(4, Box::new(remaining_item));
             }
 
@@ -501,6 +426,10 @@ fn build_tray_menu(
                     None::<&str>,
                 )
                 .unwrap();
+                #[cfg(target_os = "windows")]
+                {
+                    let _ = weekly_item.set_icon(tray_icon::render_menu_icon("weekly_remaining"));
+                }
                 items.insert(5, Box::new(weekly_item));
             }
 
@@ -587,7 +516,138 @@ pub fn update_tray_menu(app: &AppHandle, state: &AppState) {
         }
     };
 
-    // 使用 try_lock 避免死锁，如果锁被占用则跳过托盘更新
+    let separator = PredefinedMenuItem::separator(app).unwrap();
+    let quit = MenuItem::with_id(app, "quit", i18n.quit, true, None::<&str>).unwrap();
+    #[cfg(target_os = "windows")]
+    {
+        let _ = quit.set_icon(tray_icon::render_menu_icon("quit"));
+    }
+    let set_key = MenuItem::with_id(app, "set_key", i18n.set_key, true, None::<&str>).unwrap();
+    let clear_key = MenuItem::with_id(app, "clear_key", i18n.clear_key, true, None::<&str>).unwrap();
+    #[cfg(target_os = "windows")]
+    {
+        let _ = set_key.set_icon(tray_icon::render_menu_icon("set_key"));
+        let _ = clear_key.set_icon(tray_icon::render_menu_icon("clear_key"));
+    }
+    let refresh = MenuItem::with_id(app, "refresh", i18n.refresh, true, None::<&str>).unwrap();
+    #[cfg(target_os = "windows")]
+    {
+        let _ = refresh.set_icon(tray_icon::render_menu_icon("refresh"));
+    }
+    let toggle_show_percent = CheckMenuItem::with_id(
+        app,
+        "toggle_show_percent",
+        i18n.show_percent_toggle,
+        true,
+        config_snapshot.show_percent_in_tray,
+        None::<&str>,
+    )
+    .unwrap();
+    #[cfg(target_os = "windows")]
+    {
+        let _ = toggle_show_percent.set_icon(tray_icon::render_menu_icon("toggle_show_percent"));
+    }
+
+    let mut items: Vec<Box<dyn tauri::menu::IsMenuItem<tauri::Wry>>> = vec![
+        Box::new(MenuItem::with_id(app, "status", &status_text, false, None::<&str>).unwrap()),
+        Box::new(separator),
+        Box::new(refresh),
+        Box::new(toggle_show_percent),
+        Box::new(set_key),
+        Box::new(clear_key),
+    ];
+
+    if let Some(ref data) = *usage_snapshot {
+        if data.ok {
+            if !data.primary_model_name.is_empty() {
+                let model_item = MenuItem::with_id(
+                    app,
+                    "model",
+                    &format!("{}: {}", i18n.model_prefix, data.primary_model_name),
+                    false,
+                    None::<&str>,
+                )
+                .unwrap();
+                #[cfg(target_os = "windows")]
+                {
+                    let _ = model_item.set_icon(tray_icon::render_menu_icon("model"));
+                }
+                items.insert(2, Box::new(model_item));
+            }
+
+            if !data.interval_label.is_empty() {
+                let interval_item = MenuItem::with_id(
+                    app,
+                    "interval",
+                    &format!("{}: {}", i18n.interval_prefix, data.interval_label),
+                    false,
+                    None::<&str>,
+                )
+                .unwrap();
+                #[cfg(target_os = "windows")]
+                {
+                    let _ = interval_item.set_icon(tray_icon::render_menu_icon("interval"));
+                }
+                items.insert(3, Box::new(interval_item));
+            }
+
+            if let Some(remaining) = data.remaining_count {
+                let remaining_item = MenuItem::with_id(
+                    app,
+                    "remaining",
+                    &format!("{}: {}", i18n.remaining_prefix, remaining),
+                    false,
+                    None::<&str>,
+                )
+                .unwrap();
+                #[cfg(target_os = "windows")]
+                {
+                    let _ = remaining_item.set_icon(tray_icon::render_menu_icon("remaining"));
+                }
+                items.insert(4, Box::new(remaining_item));
+            }
+
+            if let Some(ref weekly_remaining) = data.weekly_remaining_count {
+                let weekly_item = MenuItem::with_id(
+                    app,
+                    "weekly_remaining",
+                    &format!("{}: {}", i18n.weekly_remaining_prefix, weekly_remaining),
+                    false,
+                    None::<&str>,
+                )
+                .unwrap();
+                #[cfg(target_os = "windows")]
+                {
+                    let _ = weekly_item.set_icon(tray_icon::render_menu_icon("weekly_remaining"));
+                }
+                items.insert(5, Box::new(weekly_item));
+            }
+
+            if !data.last_updated.is_empty() {
+                let sep2 = PredefinedMenuItem::separator(app).unwrap();
+                let updated_item = MenuItem::with_id(
+                    app,
+                    "updated",
+                    &format!("{}: {}", i18n.updated_prefix, data.last_updated),
+                    false,
+                    None::<&str>,
+                )
+                .unwrap();
+                items.push(Box::new(sep2));
+                items.push(Box::new(updated_item));
+            }
+        } else {
+            let error_item = MenuItem::with_id(app, "error", &format!("⚠️ {}", data.status_label), false, None::<&str>).unwrap();
+            items.insert(2, Box::new(error_item));
+        }
+    }
+
+    items.push(Box::new(PredefinedMenuItem::separator(app).unwrap()));
+    items.push(Box::new(quit));
+
+    let menu = Menu::with_items(app, &items.iter().map(|i| i.as_ref()).collect::<Vec<_>>())
+        .unwrap();
+
     let tray_title = if config_snapshot.show_percent_in_tray {
         usage_snapshot
             .as_ref()
@@ -597,54 +657,31 @@ pub fn update_tray_menu(app: &AppHandle, state: &AppState) {
         "MM".to_string()
     };
 
-    if let Ok(tray_guard) = state.tray.try_lock() {
-        if let Some(tray) = tray_guard.as_ref() {
-            let menu_signature = tray_menu_signature(
-                &config_snapshot,
-                api_key_snapshot.is_some() || !config_snapshot.api_keys.is_empty(),
-                &status_text,
-                usage_snapshot.as_ref(),
-            );
+    if let Some(tray) = state.tray.lock().unwrap().as_ref() {
+        set_tray_title_with_color(tray, Some(&tray_title));
 
-            let (should_update_title, should_update_menu) = {
-                let cache = state.tray_render_cache.lock().unwrap();
-                let title_changed = cache.last_title.as_deref() != Some(tray_title.as_str());
-                let menu_changed =
-                    cache.last_menu_signature.as_deref() != Some(menu_signature.as_str());
-                (title_changed, menu_changed)
-            };
-
-            if !should_update_title && !should_update_menu {
-                return;
-            }
-
-            if should_update_title {
-                set_tray_title_with_color(app, tray, Some(&tray_title));
-            }
-
-            if should_update_menu {
-                let menu = build_tray_menu(
-                    app,
-                    &i18n,
-                    &status_text,
-                    config_snapshot.show_percent_in_tray,
-                    usage_snapshot.as_ref(),
-                );
-                if let Err(e) = tray.set_menu(Some(menu)) {
-                    log::error!("Failed to update tray menu: {}", e);
-                }
-            }
-
-            let mut cache = state.tray_render_cache.lock().unwrap();
-            if should_update_title {
-                cache.last_title = Some(tray_title);
-            }
-            if should_update_menu {
-                cache.last_menu_signature = Some(menu_signature);
-            }
+        // Update tooltip with rich usage details (Windows/Linux)
+        #[cfg(not(target_os = "macos"))]
+        if let Some(ref data) = *usage_snapshot {
+            let i18n2 = tray_i18n(&config_snapshot.language);
+            let tooltip_text = build_tooltip(data, &i18n2);
+            let _ = tray.set_tooltip(Some(&tooltip_text));
         }
-    } else {
-        log::warn!("update_tray_menu: tray lock busy, skipping");
+
+        // Dynamically update tray icon based on latest usage data
+        #[cfg(not(target_os = "macos"))]
+        {
+            let icon_style = config_snapshot.tray_icon_style.clone();
+            let (used_percent, ok) = usage_snapshot
+                .as_ref()
+                .map(|d| (d.used_percent, d.ok))
+                .unwrap_or((None, false));
+            let _ = tray.set_icon(Some(tray_icon::render_tray_icon(&icon_style, used_percent, ok)));
+        }
+
+        if let Err(e) = tray.set_menu(Some(menu)) {
+            log::error!("Failed to update tray menu: {}", e);
+        }
     }
 }
 
@@ -657,42 +694,46 @@ pub fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     };
     let i18n = tray_i18n(&language);
 
-    let menu = Menu::with_items(
+    let refresh_item = MenuItem::with_id(&app_handle, "refresh", i18n.refresh, true, None::<&str>).unwrap();
+    let toggle_item = CheckMenuItem::with_id(
         &app_handle,
-        &[
-            &MenuItem::with_id(
-                &app_handle,
-                "status",
-                i18n.loading_hint,
-                false,
-                None::<&str>,
-            )
-            .unwrap(),
-            &PredefinedMenuItem::separator(&app_handle).unwrap(),
-            &MenuItem::with_id(&app_handle, "refresh", i18n.refresh, true, None::<&str>).unwrap(),
-            &CheckMenuItem::with_id(
-                &app_handle,
-                "toggle_show_percent",
-                i18n.show_percent_toggle,
-                true,
-                show_percent_in_tray,
-                None::<&str>,
-            )
-            .unwrap(),
-            &MenuItem::with_id(&app_handle, "set_key", i18n.set_key, true, None::<&str>).unwrap(),
-            &MenuItem::with_id(&app_handle, "clear_key", i18n.clear_key, true, None::<&str>)
-                .unwrap(),
-            &PredefinedMenuItem::separator(&app_handle).unwrap(),
-            &MenuItem::with_id(&app_handle, "quit", i18n.quit, true, None::<&str>).unwrap(),
-        ],
-    )?;
+        "toggle_show_percent",
+        i18n.show_percent_toggle,
+        true,
+        show_percent_in_tray,
+        None::<&str>,
+    )
+    .unwrap();
+    let set_key_item = MenuItem::with_id(&app_handle, "set_key", i18n.set_key, true, None::<&str>).unwrap();
+    let clear_key_item = MenuItem::with_id(&app_handle, "clear_key", i18n.clear_key, true, None::<&str>).unwrap();
+    let quit_item = MenuItem::with_id(&app_handle, "quit", i18n.quit, true, None::<&str>).unwrap();
+
+    #[cfg(target_os = "windows")]
+    {
+        let _ = refresh_item.set_icon(tray_icon::render_menu_icon("refresh"));
+        let _ = toggle_item.set_icon(tray_icon::render_menu_icon("toggle_show_percent"));
+        let _ = set_key_item.set_icon(tray_icon::render_menu_icon("set_key"));
+        let _ = clear_key_item.set_icon(tray_icon::render_menu_icon("clear_key"));
+        let _ = quit_item.set_icon(tray_icon::render_menu_icon("quit"));
+    }
+
+    let menu = Menu::with_items(&app_handle, &[
+        &MenuItem::with_id(&app_handle, "status", i18n.loading_hint, false, None::<&str>).unwrap(),
+        &PredefinedMenuItem::separator(&app_handle).unwrap(),
+        &refresh_item,
+        &toggle_item,
+        &set_key_item,
+        &clear_key_item,
+        &PredefinedMenuItem::separator(&app_handle).unwrap(),
+        &quit_item,
+    ])?;
 
     let mut tray_builder = TrayIconBuilder::new()
         .menu(&menu)
         .tooltip("MiniMax Usage Monitor")
         .show_menu_on_left_click(false);
 
-    if let Some(icon) = resolve_tray_icon(app) {
+    if let Some(icon) = resolve_tray_icon(app, &state) {
         tray_builder = tray_builder.icon(icon);
     } else {
         log::error!("Failed to resolve tray icon");

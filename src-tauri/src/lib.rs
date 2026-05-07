@@ -5,6 +5,7 @@ mod config;
 mod notifications;
 mod state;
 mod tray;
+mod tray_icon;
 
 #[cfg(target_os = "linux")]
 mod linux_fix;

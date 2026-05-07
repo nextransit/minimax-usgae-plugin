@@ -156,6 +156,10 @@ const i18n = {
     autoStart: '开机自动启动',
     enableNotifications: '启用系统通知',
     showPercentInTray: '托盘栏显示使用比例',
+    trayIconStyle: '托盘图标风格',
+    trayIconStyleDefault: '默认（数字）',
+    trayIconStyleMinimal: '简约（圆点）',
+    trayIconStyleGauge: '仪表（环形）',
     unconfiguredKey: '未配置加密密钥',
     unconfiguredDesc: '系统核心功能需要 MiniMax API Key 授权。请在控制台中输入您的访问密钥以同步数据。',
     initAccess: '配置密钥',
@@ -217,6 +221,10 @@ const i18n = {
     autoStart: 'Launch at login',
     enableNotifications: 'Enable system notifications',
     showPercentInTray: 'Show usage percent in tray',
+    trayIconStyle: 'Tray icon style',
+    trayIconStyleDefault: 'Default (Digital)',
+    trayIconStyleMinimal: 'Minimal (Dot)',
+    trayIconStyleGauge: 'Gauge (Ring)',
     unconfiguredKey: 'Unconfigured API Key',
     unconfiguredDesc: 'System core features require MiniMax API Key authorization. Please enter your access key to sync data.',
     initAccess: 'INITIALIZE ACCESS',
@@ -291,6 +299,7 @@ let settings = {
   autostart: false,
   enable_notifications: true,
   show_percent_in_tray: true,
+  tray_icon_style: 'default',
 };
 
 let renderScheduled = false;
@@ -722,6 +731,7 @@ async function loadSettings() {
     settings.start_minimized = config.start_minimized || false;
     settings.enable_notifications = config.enable_notifications !== false;
     settings.show_percent_in_tray = config.show_percent_in_tray !== false;
+    settings.tray_icon_style = config.tray_icon_style || 'default';
 
     // Load autostart status
     settings.autostart = await invokeOrFallback(
@@ -745,6 +755,15 @@ async function loadSettings() {
     if (showPercentInTrayEl) showPercentInTrayEl.checked = settings.show_percent_in_tray;
 
     attachSettingsHandlers();
+
+    // Tray icon style
+    const trayIconStyleEl = document.getElementById('setting-tray-icon-style');
+    if (trayIconStyleEl) {
+      trayIconStyleEl.value = settings.tray_icon_style;
+      trayIconStyleEl.addEventListener('change', (e) => {
+        saveSetting('tray_icon_style', e.target.value);
+      });
+    }
   } catch (error) {
     console.error('Load settings error:', error);
   }
