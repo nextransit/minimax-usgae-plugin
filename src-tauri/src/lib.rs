@@ -222,6 +222,8 @@ pub fn run() {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.with_webview(|webview| {
                         use webkit2gtk::{WebViewExt, SettingsExt, HardwareAccelerationPolicy};
+                        let webview = webview.inner();
+
                         if let Some(settings) = webview.settings() {
                             SettingsExt::set_hardware_acceleration_policy(&settings, HardwareAccelerationPolicy::Never);
                         }

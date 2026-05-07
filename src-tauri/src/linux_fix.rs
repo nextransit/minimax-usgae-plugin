@@ -3,7 +3,7 @@
 //! 解决 Tauri 2.x 在部分 Linux 发行版（尤其是 Wayland / 某些 WebKitGTK
 //! 版本）上启动后 UI 无法响应点击的问题
 
-use tauri::{PhysicalSize, WebviewWindow};
+use tauri::{Manager, PhysicalSize, WebviewWindow};
 
 /// 延迟时间，等待 GTK realize
 const REALIZE_WAIT_MS: u64 = 200;
@@ -55,7 +55,6 @@ pub fn should_register_deep_link(app: &tauri::App) -> bool {
 #[cfg(target_os = "linux")]
 pub fn register_deep_link_handler(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     use std::fs;
-    use std::path::PathBuf;
 
     let data_dir = app.path().data_dir()?;
     let applications_dir = data_dir.join("applications");
