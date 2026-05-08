@@ -49,17 +49,22 @@ pub fn load_config() -> Result<AppConfig, Box<dyn std::error::Error>> {
     // Try to deserialize as v2 first (has api_keys field)
     let config: Result<AppConfig, _> = serde_json::from_str(&content);
 
-    if let Ok(mut config) = config {
-        // Check if migration is needed: config_version == 0 or api_keys is empty
-        if config.config_version == 0 || config.api_keys.is_empty() {
-            log::info!("Migrating config from v1 to v2");
-            if migrate_v1_to_v2(&mut config) {
-                if let Err(e) = save_config(&config) {
-                    log::warn!("Failed to save migrated config: {}", e);
+    match config {
+        Ok(mut config) => {
+            // Check if migration is needed: config_version == 0 or api_keys is empty
+            if config.config_version == 0 || config.api_keys.is_empty() {
+                log::info!("Migrating config from v1 to v2");
+                if migrate_v1_to_v2(&mut config) {
+                    if let Err(e) = save_config(&config) {
+                        log::warn!("Failed to save migrated config: {}", e);
+                    }
                 }
             }
+            return Ok(config);
         }
-        return Ok(config);
+        Err(e) => {
+            log::warn!("Failed to parse v2 config ({}): {}", e, &content[..content.len().min(200)]);
+        }
     }
 
     // Fallback: try to deserialize as v1 (no api_keys field)
@@ -76,6 +81,7 @@ pub fn load_config() -> Result<AppConfig, Box<dyn std::error::Error>> {
         first_run: v1_config.first_run,
         start_minimized: v1_config.start_minimized,
         enable_notifications: v1_config.enable_notifications,
+        tray_icon_style: "default".to_string(),
         api_keys: Vec::new(),
     };
 

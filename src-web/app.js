@@ -85,7 +85,7 @@ const TAURI_API_READY_TIMEOUT_MS = 3500;
 const BOOT_IPC_TIMEOUT_MS = 3000;
 const SETTINGS_IPC_TIMEOUT_MS = 3000;
 const REFRESH_IPC_TIMEOUT_MS = 18000;
-const WRITE_IPC_TIMEOUT_MS = 15000;
+const WRITE_IPC_TIMEOUT_MS = 30000;
 
 function defaultConfig() {
   return { ...DEFAULT_CONFIG, api_keys: [] };
@@ -978,11 +978,12 @@ function renderDashboard() {
     setElementAttr(timerEl, 'data-timestamp', earliestWeeklyReset);
   }
 
-  // Risk alert - show if any key is at risk
   const riskCard = document.getElementById('risk-alert-card');
   const anyKeyAtRisk = state.apiKeys.some(key => {
     const data = state.usageData[key.id];
-    return data && data.used_percent >= 70;
+    const currentAtRisk = data && data.used_percent !== null && data.used_percent >= 70;
+    const weeklyAtRisk = data && data.weekly_used_percent !== null && data.weekly_used_percent >= 70;
+    return currentAtRisk || weeklyAtRisk;
   });
 
   if (anyKeyAtRisk) {
@@ -1024,7 +1025,8 @@ function renderDashboard() {
 
   // Last updated - use first key's timestamp
   const firstKeyData = state.apiKeys.length > 0 ? state.usageData[state.apiKeys[0].id] : null;
-  setText('last-updated', firstKeyData?.last_updated || (state.lastError || (hasAnyUsage ? t('na') : t('waitingData'))));
+  const firstKeyHasData = firstKeyData && firstKeyData.ok && firstKeyData.last_updated;
+  setText('last-updated', firstKeyHasData ? firstKeyData.last_updated : '--');
 }
 
 function renderModelDetails(data) {
@@ -1245,9 +1247,11 @@ async function loadApiKeys() {
   try {
     const keys = await invokeWithTimeout('cmd_get_api_keys', undefined, BOOT_IPC_TIMEOUT_MS);
     state.apiKeys = keys || [];
+    scheduleRender();
   } catch (e) {
     console.error('Failed to load API keys:', e);
     state.apiKeys = [];
+    scheduleRender();
   }
 }
 

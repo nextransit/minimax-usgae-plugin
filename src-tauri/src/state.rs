@@ -4,17 +4,18 @@ use std::sync::Mutex;
 use tauri::tray::TrayIcon as TauriTrayIcon;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AppConfig {
     pub config_version: u32,
     pub refresh_interval_seconds: u32,
     pub show_weekly_in_status: bool,
-    pub show_percent_in_tray: bool, // 新增：托盘栏显示当前周期比例
+    pub show_percent_in_tray: bool,
     pub detail_model_limit: u32,
     pub language: String,
-    pub first_run: bool,            // 新增：首次运行标记
-    pub start_minimized: bool,      // 新增：启动时最小化
-    pub enable_notifications: bool, // 新增：启用通知
-    pub tray_icon_style: String,    // 新增：托盘图标风格
+    pub first_run: bool,
+    pub start_minimized: bool,
+    pub enable_notifications: bool,
+    pub tray_icon_style: String,
     pub api_keys: Vec<ApiKeyEntry>,
 }
 
@@ -24,10 +25,10 @@ impl Default for AppConfig {
             config_version: 2,
             refresh_interval_seconds: 20,
             show_weekly_in_status: true,
-            show_percent_in_tray: true, // 默认开启
+            show_percent_in_tray: true,
             detail_model_limit: 8,
             language: "auto".to_string(),
-            first_run: true, // 默认首次运行
+            first_run: true,
             start_minimized: false,
             enable_notifications: true,
             tray_icon_style: "default".to_string(),
