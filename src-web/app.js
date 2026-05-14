@@ -198,7 +198,7 @@ const i18n = {
     keyConfig: '配置密钥',
     reset: '清除缓存',
     riskTitle: '风险提示',
-    riskRemaining: '当前窗口剩余仅 ',
+    riskRemaining: '最小剩余请求次数仅 ',
     riskExhausted: '额度即将耗尽，建议立即降低请求频率或切换模型！',
     riskFast: '消耗较快，请注意使用配额以避免被限流。',
     languageSwitchLabel: '语言',
@@ -263,7 +263,7 @@ const i18n = {
     keyConfig: 'KEY CONFIG',
     reset: 'RESET',
     riskTitle: 'Risk Warning',
-    riskRemaining: 'Current window remaining only ',
+    riskRemaining: 'Minimum remaining requests only ',
     riskExhausted: 'Quota is almost exhausted. Suggest lowering request frequency or switching models!',
     riskFast: 'Consuming quickly. Please monitor usage to avoid rate limits.',
     languageSwitchLabel: 'Language',
@@ -426,10 +426,8 @@ async function setupEventListeners() {
   await tauriListen('usage-updated', (event) => {
     const payload = event.payload;
     if (Array.isArray(payload) && payload.length === 2) {
-      // New multi-key format: [keyId, data]
       state.usageData[payload[0]] = payload[1];
     } else if (payload && typeof payload === 'object' && !payload.keyId) {
-      // Legacy single-key format (raw UsageData)
       state.usageData['default'] = payload;
     }
     state.lastError = '';
@@ -979,21 +977,43 @@ function renderDashboard() {
   }
 
   const riskCard = document.getElementById('risk-alert-card');
-  const anyKeyAtRisk = state.apiKeys.some(key => {
+  const remainingCandidates = [];
+  state.apiKeys.forEach(key => {
     const data = state.usageData[key.id];
-    const currentAtRisk = data && data.used_percent !== null && data.used_percent >= 70;
-    const weeklyAtRisk = data && data.weekly_used_percent !== null && data.weekly_used_percent >= 70;
-    return currentAtRisk || weeklyAtRisk;
+    if (data && data.ok && typeof data.remaining_count === 'number') {
+      remainingCandidates.push({
+        remaining: data.remaining_count,
+        usedPercent: typeof data.used_percent === 'number' ? data.used_percent : null,
+      });
+    }
   });
+  const minRemainingEntry = remainingCandidates.length > 0
+    ? remainingCandidates.reduce((minEntry, entry) =>
+      entry.remaining < minEntry.remaining ? entry : minEntry,
+    remainingCandidates[0])
+    : null;
 
-  if (anyKeyAtRisk) {
+  if (minRemainingEntry && minRemainingEntry.remaining <= 20) {
     if (riskCard) {
+      const minRemainingCount = minRemainingEntry.remaining;
+      const alertStatus = minRemainingCount <= 5 ? 'critical' : 'warning';
+      const riskKey = minRemainingCount <= 5 ? 'riskExhausted' : 'riskFast';
+      const riskIconText = minRemainingCount <= 5 ? '🚨' : '⚠️';
+
       setElementDisplay(riskCard, 'flex');
-      setElementClass(riskCard, `cyber-card risk-alert ${currentStatus}`);
-      setText('risk-remaining-percent', String(Math.round(100 - currentPercent)));
+      setElementClass(riskCard, `cyber-card risk-alert ${alertStatus}`);
+      setText('risk-remaining-percent', String(minRemainingCount));
+
+      const riskWindowLabel = document.getElementById('risk-window-label');
+      if (riskWindowLabel) {
+        const windowLabelText = t('riskRemaining');
+        if (riskWindowLabel.textContent !== windowLabelText) {
+          riskWindowLabel.textContent = windowLabelText;
+        }
+      }
+
       const riskMsg = document.getElementById('risk-message');
       if (riskMsg) {
-        const riskKey = currentPercent >= 90 ? 'riskExhausted' : 'riskFast';
         setElementAttr(riskMsg, 'data-i18n', riskKey);
         const riskText = t(riskKey);
         if (riskMsg.textContent !== riskText) {
@@ -1002,7 +1022,6 @@ function renderDashboard() {
       }
       const riskIcon = document.getElementById('risk-icon');
       if (riskIcon) {
-        const riskIconText = currentPercent >= 90 ? '🚨' : '⚠️';
         if (riskIcon.textContent !== riskIconText) {
           riskIcon.textContent = riskIconText;
         }
@@ -1023,10 +1042,13 @@ function renderDashboard() {
     renderModelDetails(null);
   }
 
-  // Last updated - use first key's timestamp
-  const firstKeyData = state.apiKeys.length > 0 ? state.usageData[state.apiKeys[0].id] : null;
-  const firstKeyHasData = firstKeyData && firstKeyData.ok && firstKeyData.last_updated;
-  setText('last-updated', firstKeyHasData ? firstKeyData.last_updated : '--');
+  // Last updated - show the latest available timestamp even when a key is in error state.
+  const latestUpdated = state.apiKeys.reduce((latest, key) => {
+    const updated = state.usageData[key.id]?.last_updated;
+    if (!updated) return latest;
+    return updated > latest ? updated : latest;
+  }, '');
+  setText('last-updated', latestUpdated || '--');
 }
 
 function renderModelDetails(data) {

@@ -1,7 +1,7 @@
 use tauri::{AppHandle, Manager};
 use tauri_plugin_notification::NotificationExt;
 
-pub fn check_and_notify(app: &AppHandle, used_percent: f64, remaining_percent: f64) {
+pub fn check_and_notify(app: &AppHandle, min_remaining_count: i64) {
     let state = app.state::<crate::state::AppState>();
     let config = state.config.lock().unwrap();
 
@@ -9,24 +9,24 @@ pub fn check_and_notify(app: &AppHandle, used_percent: f64, remaining_percent: f
         return;
     }
 
-    if used_percent >= 90.0 {
+    if min_remaining_count <= 5 {
         let _ = app
             .notification()
             .builder()
             .title("⚠️ MiniMax 额度告警")
             .body(&format!(
-                "当前窗口额度即将耗尽！仅剩 {:.0}%",
-                remaining_percent
+                "最小剩余请求次数即将耗尽！仅剩 {} 次",
+                min_remaining_count
             ))
             .show();
-    } else if used_percent >= 80.0 {
+    } else if min_remaining_count <= 20 {
         let _ = app
             .notification()
             .builder()
             .title("⚡ MiniMax 额度提醒")
             .body(&format!(
-                "当前窗口已使用 {:.0}%，请注意配额消耗",
-                used_percent
+                "最小剩余请求次数仅 {} 次，请注意配额消耗",
+                min_remaining_count
             ))
             .show();
     }

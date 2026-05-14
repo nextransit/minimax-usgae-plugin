@@ -40,11 +40,13 @@ type UsageViewModel = {
   ok: boolean;
   statusLabel: string;
   primaryModelName: string;
+  minRemainingModelName: string;
   timeWindow: string;
   resetInLabel: string;
   resetTimestamp: number | null;
   totalCount: number | null;
   remainingCount: number | null;
+  minRemainingCount: number | null;
   usedCount: number | null;
   usedPercent: number | null;
   weeklyTotalCount: number | null;
@@ -117,11 +119,13 @@ let cachedNonce: string | undefined;
 
 const emptyUsageViewModel = {
   primaryModelName: "",
+  minRemainingModelName: "",
   timeWindow: "",
   resetInLabel: "",
   resetTimestamp: null,
   totalCount: null,
   remainingCount: null,
+  minRemainingCount: null,
   usedCount: null,
   usedPercent: null,
   weeklyTotalCount: null,
@@ -161,11 +165,11 @@ function getRuntimeStrings(config: ExtensionConfig = readConfig()) {
     warnRiskLowQuota:
       isEn
         ? "MiniMax risk warning: only "
-        : "MiniMax 风险提示: 当前窗口剩余仅 ",
+        : "MiniMax 风险提示: 最小剩余请求次数仅 ",
     warnRiskLowQuotaSuffix:
       isEn
-        ? "% left in the current window. Consider lowering request frequency or switching models."
-        : "%，即将耗尽！建议降低请求频率或切换模型。",
+        ? " requests left. Consider lowering request frequency or switching models."
+        : " 次，即将耗尽！建议降低请求频率或切换模型。",
     errorQueryFailedPrefix: isEn ? "MiniMax query failed: " : "MiniMax 查询失败：",
     errorQueryExceptionPrefix: isEn ? "MiniMax query error: " : "MiniMax 查询异常：",
     errorUnknown: isEn ? "Unknown error" : "未知错误",
@@ -570,11 +574,11 @@ async function refreshUsage(reason: "startup" | "auto" | "manual"): Promise<void
     log(`refresh completed [${reason}] ok=${result.ok} status=${statusCodeLabel} summary=${result.summary}`);
 
     // 高风险弹窗提示逻辑
-    if (result.ok && latestVm && latestVm.usedPercent !== null) {
-      if (latestVm.usedPercent >= 95) {
+    if (result.ok && latestVm && latestVm.minRemainingCount !== null) {
+      if (latestVm.minRemainingCount <= 5) {
         if (!hasAlertedHighRisk) {
           void vscode.window.showWarningMessage(
-            `${strings.warnRiskLowQuota}${100 - latestVm.usedPercent}${strings.warnRiskLowQuotaSuffix}`,
+            `${strings.warnRiskLowQuota}${latestVm.minRemainingCount}${strings.warnRiskLowQuotaSuffix}`,
           );
           hasAlertedHighRisk = true;
         }
@@ -924,10 +928,11 @@ function renderDetailsPanelHtml(): string {
 
   const usedPercent = latestVm.usedPercent ?? 0;
   const weeklyUsedPercent = latestVm.weeklyUsedPercent ?? 0;
+  const minRemainingCount = latestVm.minRemainingCount ?? latestVm.remainingCount ?? 0;
   
   const windowProgress = clampPercent(usedPercent);
   const weeklyProgress = clampPercent(weeklyUsedPercent);
-  const windowStatus = usedPercent >= 90 ? "critical" : usedPercent >= 70 ? "warning" : "normal";
+  const windowStatus = minRemainingCount <= 5 ? "critical" : minRemainingCount <= 20 ? "warning" : "normal";
   const weeklyStatus = weeklyUsedPercent >= 90 ? "critical" : weeklyUsedPercent >= 70 ? "warning" : "normal";
   
   const updatedAt = lastUpdatedAt ? formatDateTime(lastUpdatedAt.getTime()) : i18n.na;
@@ -1049,17 +1054,17 @@ function renderDetailsPanelHtml(): string {
           </div>
         </section>
 
-        ${usedPercent >= 70 ? `
+        ${minRemainingCount <= 20 ? `
         <!-- Risk Warning Card -->
         <section class="cyber-card risk-alert ${windowStatus}">
           <div class="card-glow"></div>
           <div class="risk-content">
-            <div class="risk-icon">${usedPercent >= 90 ? '🚨' : '⚠️'}</div>
+            <div class="risk-icon">${minRemainingCount <= 5 ? '🚨' : '⚠️'}</div>
             <div class="risk-text">
               <h3>${i18n.riskTitle}</h3>
               <ul>
-                <li>${i18n.riskRemaining}${100 - usedPercent}%</li>
-                <li>${usedPercent >= 90 ? i18n.riskExhausted : i18n.riskFast}</li>
+                <li>${i18n.riskRemaining}${minRemainingCount} 次</li>
+                <li>${minRemainingCount <= 5 ? i18n.riskExhausted : i18n.riskFast}</li>
               </ul>
             </div>
           </div>
@@ -2240,12 +2245,25 @@ function buildUsageViewModel(result: RemainsResult): UsageViewModel {
         usedCount: Math.max(modelTotalCount - modelRemainingCount, 0),
       };
     });
+  const riskSourceModels = filteredModels.length > 0
+    ? filteredModels
+    : [{
+      name: primaryModel.model_name ?? strings.unknownModel,
+      timeWindow: "",
+      totalCount,
+      remainingCount,
+      usedCount,
+    }];
+  const minRemainingModel = riskSourceModels.reduce((minModel, currentModel) =>
+    currentModel.remainingCount < minModel.remainingCount ? currentModel : minModel,
+  riskSourceModels[0]);
 
   return {
     ok: result.ok,
     statusLabel,
     raw: result.raw,
     primaryModelName: primaryModel.model_name ?? "",
+    minRemainingModelName: minRemainingModel.name,
     timeWindow: hasTimeWindow
       ? `${formatDateTime(primaryModel.start_time as number)} ~ ${formatTime(primaryModel.end_time as number)}${strings.timeZoneSuffix}`
       : "",
@@ -2264,6 +2282,7 @@ function buildUsageViewModel(result: RemainsResult): UsageViewModel {
         : null,
     totalCount,
     remainingCount,
+    minRemainingCount: minRemainingModel.remainingCount,
     usedCount,
     usedPercent: totalCount > 0 ? Math.round((usedCount / totalCount) * 100) : 0,
     weeklyTotalCount: hasWeeklyQuota ? weeklyTotalCount : null,

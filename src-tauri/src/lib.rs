@@ -110,8 +110,20 @@ async fn refresh_usage_data(
             tray::update_tray_menu(app_h, &state);
             let _ = app_h.emit("usage-updated", (&key_id, data.clone()));
 
-            if let Some(percent) = data.used_percent {
-                notifications::check_and_notify(app_h, percent, 100.0 - percent);
+            if data.ok {
+                let min_remaining = if !data.models.is_empty() {
+                    data.models
+                        .iter()
+                        .map(|m| m.remaining_count)
+                        .min()
+                        .or(data.remaining_count)
+                } else {
+                    data.remaining_count
+                };
+
+                if let Some(min_remaining_count) = min_remaining {
+                    notifications::check_and_notify(app_h, min_remaining_count);
+                }
             }
         }
         Err(e) => {
