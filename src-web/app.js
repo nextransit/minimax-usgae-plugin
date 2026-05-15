@@ -1132,6 +1132,8 @@ function renderDashboard() {
 }
 
 function renderAggregateView() {
+  document.documentElement.style.removeProperty('--key-color');
+  document.documentElement.style.removeProperty('--key-glow');
   const m = getAggregateMetrics();
   const visibleKeys = getVisibleKeys();
 
