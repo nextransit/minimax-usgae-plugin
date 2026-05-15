@@ -1330,6 +1330,98 @@ function formatNumber(value) {
   return new Intl.NumberFormat().format(value);
 }
 
+// ── multi-key helpers ───────────────────────────────────────────────────────
+
+function getVisibleKeys() {
+  return (state.apiKeys || []).filter(k => k && k.is_active !== false);
+}
+
+function getKeyById(id) {
+  if (!id || id === 'ALL') return null;
+  return (state.apiKeys || []).find(k => k && k.id === id) || null;
+}
+
+function getAggregateMetrics() {
+  const totals = {
+    used: 0, remaining: 0, total: 0,
+    weeklyUsed: 0, weeklyRemaining: 0, weeklyTotal: 0,
+    earliestReset: 0, earliestWeeklyReset: 0,
+    primaryModel: '', intervalLabel: '',
+    hasData: false,
+  };
+  getVisibleKeys().forEach(key => {
+    const data = state.usageData[key.id];
+    if (!data || !data.ok) return;
+    totals.hasData = true;
+    totals.used += data.used_count || 0;
+    totals.remaining += data.remaining_count || 0;
+    totals.total += data.total_count || 0;
+    totals.weeklyUsed += data.weekly_used_count || 0;
+    totals.weeklyRemaining += data.weekly_remaining_count || 0;
+    totals.weeklyTotal += data.weekly_total_count || 0;
+    if (data.reset_timestamp && (totals.earliestReset === 0 || data.reset_timestamp < totals.earliestReset)) {
+      totals.earliestReset = data.reset_timestamp;
+    }
+    if (data.weekly_reset_timestamp && (totals.earliestWeeklyReset === 0 || data.weekly_reset_timestamp < totals.earliestWeeklyReset)) {
+      totals.earliestWeeklyReset = data.weekly_reset_timestamp;
+    }
+    if (!totals.primaryModel && data.primary_model_name) {
+      totals.primaryModel = data.primary_model_name;
+      totals.intervalLabel = data.interval_label || '';
+    }
+  });
+  return totals;
+}
+
+function getAggregatePercent() {
+  const m = getAggregateMetrics();
+  if (!m.total) return 0;
+  return clampPercent((m.used / m.total) * 100);
+}
+
+function maskApiKey(raw) {
+  if (!raw || typeof raw !== 'string') return '';
+  const s = raw.trim();
+  if (s.length <= 4) return '*'.repeat(s.length);
+  if (s.length <= 10) return s.slice(0, 2) + '...' + s.slice(-2);
+  return s.slice(0, 6) + '...' + s.slice(-4);
+}
+
+function formatRelative(epochSeconds) {
+  if (!epochSeconds) return '';
+  const now = Math.floor(Date.now() / 1000);
+  const delta = Math.max(0, now - Math.floor(Number(epochSeconds)));
+  if (delta < 60) return t('syncedAgo').replace('{rel}', `${delta}${t('secondAgoUnit')}`);
+  if (delta < 3600) return t('syncedAgo').replace('{rel}', `${Math.floor(delta / 60)}${t('minuteAgoUnit')}`);
+  if (delta < 86400) return t('syncedAgo').replace('{rel}', `${Math.floor(delta / 3600)}${t('hourAgoUnit')}`);
+  return t('syncedAgo').replace('{rel}', `${Math.floor(delta / 86400)}${t('dayAgoUnit')}`);
+}
+
+function parseLastUpdatedToEpoch(lastUpdated) {
+  if (!lastUpdated) return 0;
+  const ts = Date.parse(lastUpdated);
+  if (!Number.isFinite(ts)) return 0;
+  return Math.floor(ts / 1000);
+}
+
+function safeKeyColor(color) {
+  if (typeof color !== 'string') return '#00d4ff';
+  const trimmed = color.trim();
+  if (/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(trimmed)) return trimmed;
+  return '#00d4ff';
+}
+
+function hexToRgba(color, alpha) {
+  const hex = safeKeyColor(color).replace('#', '');
+  const value = hex.length === 3
+    ? hex.split('').map(c => c + c).join('')
+    : hex;
+  const r = parseInt(value.slice(0, 2), 16);
+  const g = parseInt(value.slice(2, 4), 16);
+  const b = parseInt(value.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
 function clampPercent(value) {
   if (value === null || value === undefined || isNaN(value)) return 0;
   return Math.min(100, Math.max(0, value));
