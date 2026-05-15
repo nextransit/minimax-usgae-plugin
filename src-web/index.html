@@ -1591,9 +1591,9 @@ body {
 
 .dashboard-section.fade-out { opacity: 0; pointer-events: none; }
 
-/* progress bars in the main cards now honor --key-color in single-key view */
-#dashboard.single-key #current-progress,
-#dashboard.single-key #weekly-progress {
+/* progress bars in the main cards honor --key-color in single-key view ONLY when status is normal */
+#dashboard.single-key #current-progress.normal,
+#dashboard.single-key #weekly-progress.normal {
   background: var(--key-color);
 }
 
