@@ -252,6 +252,35 @@ const i18n = {
     keyColor: '颜色',
     keyRefresh: '刷新间隔（秒）',
     apiKey: 'API Key',
+    // multi-key view
+    allKeys: '全部',
+    keysActiveCount: '个密钥',
+    addKey: '+ 新增',
+    copyToClipboard: '复制',
+    copied: '已复制',
+    keyHidden: '已隐藏',
+    restoreKey: '恢复',
+    syncFailed: '同步失败',
+    retryNow: '重试',
+    expandDetails: '展开',
+    collapseDetails: '收起',
+    modelBreakdown: '模型明细',
+    keyCreated: '创建时间',
+    lastSynced: '最近同步',
+    syncedAgo: '{rel} 前',
+    refreshIntervalShort: '刷新',
+    allKeysHidden: '所有密钥已隐藏，点击 👁 恢复。',
+    keyboardHint: 'Cmd/Ctrl + 1..9 切换',
+    deleteConfirm: '删除该密钥?',
+    deleteConfirmYes: '删除',
+    deleteConfirmNo: '取消',
+    breakdownTitle: '密钥明细',
+    aggregateTitle: '全部聚合',
+    resetIn: '重置于',
+    secondAgoUnit: '秒',
+    minuteAgoUnit: '分',
+    hourAgoUnit: '时',
+    dayAgoUnit: '日',
   },
   en: {
     settings: 'Settings',
@@ -318,6 +347,35 @@ const i18n = {
     keyColor: 'Color',
     keyRefresh: 'Refresh Interval (seconds)',
     apiKey: 'API Key',
+    // multi-key view
+    allKeys: 'ALL',
+    keysActiveCount: 'keys',
+    addKey: '+ ADD',
+    copyToClipboard: 'Copy',
+    copied: 'Copied',
+    keyHidden: 'Hidden',
+    restoreKey: 'Restore',
+    syncFailed: 'Sync failed',
+    retryNow: 'Retry',
+    expandDetails: 'Expand',
+    collapseDetails: 'Collapse',
+    modelBreakdown: 'MODEL BREAKDOWN',
+    keyCreated: 'Created',
+    lastSynced: 'synced',
+    syncedAgo: '{rel} ago',
+    refreshIntervalShort: 'refresh',
+    allKeysHidden: 'All keys are hidden. Click 👁 to restore.',
+    keyboardHint: 'Cmd/Ctrl + 1..9 to switch',
+    deleteConfirm: 'Delete this key?',
+    deleteConfirmYes: 'Delete',
+    deleteConfirmNo: 'Cancel',
+    breakdownTitle: 'PER-KEY BREAKDOWN',
+    aggregateTitle: 'AGGREGATE',
+    resetIn: 'RESET in',
+    secondAgoUnit: 's',
+    minuteAgoUnit: 'm',
+    hourAgoUnit: 'h',
+    dayAgoUnit: 'd',
   },
 };
 
@@ -330,6 +388,14 @@ let state = {
   isBooting: true,
   isLoading: false,
   lastError: '',
+  // ── multi-key view state ──────────────────────────────
+  selectedKeyId: 'ALL',                       // 'ALL' | <key.id>
+  expandedKeyIds: new Set(),                  // breakdown 中已展开的 key id
+  reorderDraft: null,                         // 拖拽中的临时 id 数组 (string[] | null)
+  perKeyError: {},                            // {keyId: errorMessage} 用于 inline 错误
+  pendingRefreshKeyIds: new Set(),            // 单 key 刷新时的 loading 状态
+  hiddenInRefreshDraft: new Set(),            // 👁 切换的乐观状态
+  deleteConfirmKeyId: null,                   // 当前行内删除确认气泡指向的 key
 };
 
 // Settings state
