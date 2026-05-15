@@ -420,6 +420,7 @@ function scheduleRender() {
   const flush = () => {
     renderScheduled = false;
     render();
+    bindReorderHandlers();
     syncCountdownTargets();
   };
   if (typeof window.requestAnimationFrame === 'function') {
@@ -1563,6 +1564,87 @@ async function handleBreakdownAction(action, keyId, evt) {
     default:
       return;
   }
+}
+
+// ── drag-and-drop reorder ──────────────────────────────────────────────────
+
+const dragState = {
+  active: false,
+  source: null,           // dragged element
+  sourceKeyId: null,
+  sourceContainer: null,  // 'switcher' | 'breakdown'
+};
+
+function bindReorderHandlers() {
+  const switcher = document.getElementById('key-switcher');
+  const breakdown = document.getElementById('breakdown-list');
+
+  const onDragStart = (origin) => (e) => {
+    const el = e.target.closest(origin === 'switcher' ? '.key-chip[draggable="true"]' : '.breakdown-card[draggable="true"]');
+    if (!el) return;
+    const keyId = el.getAttribute('data-key-id');
+    if (!keyId || keyId === 'ALL') return;
+    dragState.active = true;
+    dragState.source = el;
+    dragState.sourceKeyId = keyId;
+    dragState.sourceContainer = origin;
+    el.classList.add('dragging');
+    try { e.dataTransfer.setData('text/plain', keyId); e.dataTransfer.effectAllowed = 'move'; } catch (_) { /* ignore */ }
+  };
+
+  const onDragOver = (origin) => (e) => {
+    if (!dragState.active) return;
+    e.preventDefault();
+    const targetEl = e.target.closest(origin === 'switcher' ? '.key-chip[draggable="true"]' : '.breakdown-card[draggable="true"]');
+    if (!targetEl || targetEl === dragState.source) return;
+    const containerEl = origin === 'switcher' ? switcher : breakdown;
+    const rect = targetEl.getBoundingClientRect();
+    const after = origin === 'switcher'
+      ? (e.clientX - rect.left) > rect.width / 2
+      : (e.clientY - rect.top) > rect.height / 2;
+    if (after) targetEl.after(dragState.source);
+    else containerEl.insertBefore(dragState.source, targetEl);
+  };
+
+  const onDrop = (origin) => async (e) => {
+    if (!dragState.active) return;
+    e.preventDefault();
+    const containerEl = origin === 'switcher' ? switcher : breakdown;
+    const selector = origin === 'switcher' ? '.key-chip[draggable="true"]' : '.breakdown-card[draggable="true"]';
+    const newOrder = [...containerEl.querySelectorAll(selector)].map(el => el.getAttribute('data-key-id'));
+    dragState.source?.classList.remove('dragging');
+    dragState.active = false;
+    dragState.source = null;
+    dragState.sourceKeyId = null;
+    dragState.sourceContainer = null;
+    state.reorderDraft = newOrder;
+    scheduleRender();
+    try {
+      await invokeWithTimeout('cmd_reorder_api_keys', { ids: newOrder }, WRITE_IPC_TIMEOUT_MS);
+      await loadApiKeys();
+    } catch (err) {
+      console.error('reorder failed', err);
+    } finally {
+      state.reorderDraft = null;
+      scheduleRender();
+    }
+  };
+
+  const onDragEnd = () => {
+    if (dragState.source) dragState.source.classList.remove('dragging');
+    dragState.active = false;
+    dragState.source = null;
+  };
+
+  ['switcher', 'breakdown'].forEach(origin => {
+    const container = origin === 'switcher' ? switcher : breakdown;
+    if (!container || container._reorderBound) return;
+    container._reorderBound = true;
+    container.addEventListener('dragstart', onDragStart(origin));
+    container.addEventListener('dragover', onDragOver(origin));
+    container.addEventListener('drop', onDrop(origin));
+    container.addEventListener('dragend', onDragEnd);
+  });
 }
 
 function renderModelDetails(data) {
