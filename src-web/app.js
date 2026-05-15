@@ -420,6 +420,7 @@ function scheduleRender() {
   const flush = () => {
     renderScheduled = false;
     render();
+    syncCountdownTargets();
   };
   if (typeof window.requestAnimationFrame === 'function') {
     window.requestAnimationFrame(flush);
@@ -1104,182 +1105,249 @@ function renderKeySwitcher() {
 }
 
 function renderDashboard() {
-  // Calculate aggregate data from all keys
-  let totalUsed = 0, totalRemaining = 0, totalCount = 0;
-  let hasData = false;
-  let primaryModelName = '';
-  let intervalLabel = '';
+  const dashboard = document.getElementById('dashboard');
+  const view = state.selectedKeyId === 'ALL' || !getKeyById(state.selectedKeyId)
+    ? 'aggregate'
+    : 'single';
 
-  state.apiKeys.forEach(key => {
-    const data = state.usageData[key.id];
-    if (data && data.ok) {
-      hasData = true;
-      totalUsed += data.used_count || 0;
-      totalRemaining += data.remaining_count || 0;
-      totalCount += data.total_count || 0;
-      if (!primaryModelName && data.primary_model_name) {
-        primaryModelName = data.primary_model_name;
-        intervalLabel = data.interval_label || '';
-      }
-    }
-  });
+  // toggle root class so CSS can target single-key view
+  if (dashboard) {
+    dashboard.classList.toggle('single-key', view === 'single');
+    dashboard.classList.toggle('aggregate', view === 'aggregate');
+  }
 
-  // Header info
-  setText('primary-model', primaryModelName || t('unknown'));
-  const hasAnyUsage = Object.keys(state.usageData).length > 0;
-  const statusLabel = state.lastError && !hasData
+  const headerStrip = document.getElementById('key-header-strip');
+  const breakdown = document.getElementById('per-key-breakdown');
+
+  if (view === 'aggregate') {
+    setElementDisplay(headerStrip, 'none');
+    setElementDisplay(breakdown, 'block');
+    renderAggregateView();
+    renderBreakdownList();
+  } else {
+    setElementDisplay(headerStrip, 'flex');
+    setElementDisplay(breakdown, 'none');
+    renderSingleKeyView(state.selectedKeyId);
+  }
+}
+
+function renderAggregateView() {
+  const m = getAggregateMetrics();
+  const visibleKeys = getVisibleKeys();
+
+  setText('primary-model', m.primaryModel || t('unknown'));
+  const statusLabel = state.lastError && !m.hasData
     ? t('syncUnavailable')
-    : (state.isLoading && !hasData ? t('waitingData') : t('na'));
-  setText('interval-label', intervalLabel || statusLabel);
+    : (state.isLoading && !m.hasData ? t('waitingData') : t('na'));
+  setText('interval-label', m.intervalLabel || statusLabel);
 
-  // Current interval aggregate
-  const currentPercent = totalCount > 0 ? (totalUsed / totalCount) * 100 : 0;
+  // CURRENT aggregate
+  const currentPercent = m.total > 0 ? clampPercent((m.used / m.total) * 100) : 0;
   const currentStatus = getStatus(currentPercent);
-
-  setText('current-used', formatNumber(totalUsed));
-  setFlipNumber('current-remaining-container', 'current-remaining', formatNumber(totalRemaining));
-  setText('current-total', formatNumber(totalCount));
+  setText('current-used', formatNumber(m.used));
+  setFlipNumber('current-remaining-container', 'current-remaining', formatNumber(m.remaining));
+  setText('current-total', formatNumber(m.total));
   setText('current-percent', `${Math.round(currentPercent)}%`);
-
   updateProgressBar('current-card', 'current-progress', currentPercent, currentStatus);
   updateRemainingBreath('current-remaining', 'current-remaining-wrapper', currentStatus);
 
-  // Find earliest reset timestamp
-  let earliestReset = 0;
-  state.apiKeys.forEach(key => {
-    const data = state.usageData[key.id];
-    if (data && data.reset_timestamp && (earliestReset === 0 || data.reset_timestamp < earliestReset)) {
-      earliestReset = data.reset_timestamp;
-    }
-  });
-  if (earliestReset > 0) {
-    const timerEl = document.getElementById('window-countdown');
-    setElementAttr(timerEl, 'data-timestamp', earliestReset);
+  if (m.earliestReset > 0) {
+    setElementAttr(document.getElementById('window-countdown'), 'data-timestamp', m.earliestReset);
   }
 
-  // Weekly interval aggregate (use first key's weekly data for now)
-  let weeklyUsed = 0, weeklyRemaining = 0, weeklyTotal = 0;
-  let weeklyPercent = 0;
-  let weeklyStatus = 'normal';
-
-  state.apiKeys.forEach(key => {
-    const data = state.usageData[key.id];
-    if (data && data.ok) {
-      weeklyUsed += data.weekly_used_count || 0;
-      weeklyRemaining += data.weekly_remaining_count || 0;
-      weeklyTotal += data.weekly_total_count || 0;
-    }
-  });
-
-  if (weeklyTotal > 0) {
-    weeklyPercent = (weeklyUsed / weeklyTotal) * 100;
-    weeklyStatus = getStatus(weeklyPercent);
-  }
-
-  setText('weekly-used', formatNumber(weeklyUsed));
-  setFlipNumber('weekly-remaining-container', 'weekly-remaining', formatNumber(weeklyRemaining));
-  setText('weekly-total', formatNumber(weeklyTotal));
+  // WEEKLY aggregate
+  const weeklyPercent = m.weeklyTotal > 0 ? clampPercent((m.weeklyUsed / m.weeklyTotal) * 100) : 0;
+  const weeklyStatus = getStatus(weeklyPercent);
+  setText('weekly-used', formatNumber(m.weeklyUsed));
+  setFlipNumber('weekly-remaining-container', 'weekly-remaining', formatNumber(m.weeklyRemaining));
+  setText('weekly-total', formatNumber(m.weeklyTotal));
   setText('weekly-percent', `${Math.round(weeklyPercent)}%`);
-
   updateProgressBar('weekly-card', 'weekly-progress', weeklyPercent, weeklyStatus);
   updateRemainingBreath('weekly-remaining', 'weekly-remaining-wrapper', weeklyStatus);
 
-  // Find earliest weekly reset
-  let earliestWeeklyReset = 0;
-  state.apiKeys.forEach(key => {
-    const data = state.usageData[key.id];
-    if (data && data.weekly_reset_timestamp && (earliestWeeklyReset === 0 || data.weekly_reset_timestamp < earliestWeeklyReset)) {
-      earliestWeeklyReset = data.weekly_reset_timestamp;
-    }
-  });
-  if (earliestWeeklyReset > 0) {
-    const timerEl = document.getElementById('weekly-countdown');
-    setElementAttr(timerEl, 'data-timestamp', earliestWeeklyReset);
+  if (m.earliestWeeklyReset > 0) {
+    setElementAttr(document.getElementById('weekly-countdown'), 'data-timestamp', m.earliestWeeklyReset);
   }
 
+  // Risk alert (aggregate: minimum remaining among visible keys)
   const riskCard = document.getElementById('risk-alert-card');
-  const remainingCandidates = [];
-  state.apiKeys.forEach(key => {
+  const candidates = [];
+  visibleKeys.forEach(key => {
     const data = state.usageData[key.id];
-    if (data && data.ok) {
-      if (typeof data.remaining_count === 'number') {
-        remainingCandidates.push({
-          remaining: data.remaining_count,
-          kind: 'current',
-        });
-      }
-      if (typeof data.weekly_remaining_count === 'number') {
-        remainingCandidates.push({
-          remaining: data.weekly_remaining_count,
-          kind: 'weekly',
-        });
-      }
-    }
+    if (!data || !data.ok) return;
+    if (typeof data.remaining_count === 'number') candidates.push({ remaining: data.remaining_count, kind: 'current' });
+    if (typeof data.weekly_remaining_count === 'number') candidates.push({ remaining: data.weekly_remaining_count, kind: 'weekly' });
   });
-  const minRemainingEntry = remainingCandidates.length > 0
-    ? remainingCandidates.reduce((minEntry, entry) =>
-      entry.remaining < minEntry.remaining ? entry : minEntry,
-    remainingCandidates[0])
+  const minEntry = candidates.length > 0
+    ? candidates.reduce((a, b) => (a.remaining < b.remaining ? a : b), candidates[0])
     : null;
 
-  if (minRemainingEntry && minRemainingEntry.remaining <= 20) {
-    if (riskCard) {
-      const minRemainingCount = minRemainingEntry.remaining;
-      const alertStatus = minRemainingCount <= 5 ? 'critical' : 'warning';
-      const riskKey = minRemainingCount <= 5 ? 'riskExhausted' : 'riskFast';
-      const riskIconText = minRemainingCount <= 5 ? '🚨' : '⚠️';
-
-      setElementDisplay(riskCard, 'flex');
-      setElementClass(riskCard, `cyber-card risk-alert ${alertStatus}`);
-      setText('risk-remaining-percent', String(minRemainingCount));
-
-      const riskWindowLabel = document.getElementById('risk-window-label');
-      if (riskWindowLabel) {
-        const windowLabelText = minRemainingEntry.kind === 'weekly'
-          ? t('riskRemainingWeekly')
-          : t('riskRemaining');
-        if (riskWindowLabel.textContent !== windowLabelText) {
-          riskWindowLabel.textContent = windowLabelText;
-        }
-      }
-
-      const riskMsg = document.getElementById('risk-message');
-      if (riskMsg) {
-        setElementAttr(riskMsg, 'data-i18n', riskKey);
-        const riskText = t(riskKey);
-        if (riskMsg.textContent !== riskText) {
-          riskMsg.textContent = riskText;
-        }
-      }
-      const riskIcon = document.getElementById('risk-icon');
-      if (riskIcon) {
-        if (riskIcon.textContent !== riskIconText) {
-          riskIcon.textContent = riskIconText;
-        }
-      }
-    }
-  } else {
+  if (minEntry && minEntry.remaining <= 20 && riskCard) {
+    const isCritical = minEntry.remaining <= 5;
+    const labelKey = minEntry.kind === 'weekly' ? 'riskRemainingWeekly' : 'riskRemaining';
+    setText('risk-window-label', t(labelKey));
+    setText('risk-remaining-percent', String(minEntry.remaining));
+    setText('risk-message', t(isCritical ? 'riskExhausted' : 'riskFast'));
+    setElementClass(document.getElementById('risk-icon'), 'risk-icon');
+    document.getElementById('risk-icon').textContent = isCritical ? '🚨' : '⚠️';
+    setElementClass(riskCard, `cyber-card risk-alert ${isCritical ? 'critical' : 'warning'}`);
+    setElementDisplay(riskCard, 'block');
+  } else if (riskCard) {
     setElementDisplay(riskCard, 'none');
   }
 
-  // Model details - combine from all keys (take first key's models for now)
-  const firstKeyWithData = state.apiKeys.find(key => {
-    const data = state.usageData[key.id];
-    return data && data.ok && data.models && data.models.length > 0;
-  });
-  if (firstKeyWithData) {
-    renderModelDetails(state.usageData[firstKeyWithData.id]);
-  } else {
-    renderModelDetails(null);
+  // Model details: pick first key with data
+  const firstWithData = visibleKeys.find(k => state.usageData[k.id] && state.usageData[k.id].ok);
+  renderModelDetails(firstWithData ? state.usageData[firstWithData.id] : null);
+
+  // last-updated: latest among visible keys
+  const latest = visibleKeys.reduce((acc, k) => {
+    const data = state.usageData[k.id];
+    if (data && data.last_updated && (!acc || data.last_updated > acc)) return data.last_updated;
+    return acc;
+  }, '');
+  setText('last-updated', latest || '--');
+
+  // All-hidden hint
+  const hint = document.getElementById('all-hidden-hint');
+  const allHidden = state.apiKeys.length > 0 && visibleKeys.length === 0;
+  if (hint) setElementDisplay(hint, allHidden ? 'block' : 'none');
+}
+
+function renderBreakdownList() {
+  const container = document.getElementById('breakdown-list');
+  if (!container) return;
+
+  const order = state.reorderDraft && state.reorderDraft.length === state.apiKeys.length
+    ? state.reorderDraft.map(id => state.apiKeys.find(k => k.id === id)).filter(Boolean)
+    : state.apiKeys;
+
+  if (!order.length) {
+    container.innerHTML = '';
+    return;
   }
 
-  // Last updated - show the latest available timestamp even when a key is in error state.
-  const latestUpdated = state.apiKeys.reduce((latest, key) => {
-    const updated = state.usageData[key.id]?.last_updated;
-    if (!updated) return latest;
-    return updated > latest ? updated : latest;
-  }, '');
-  setText('last-updated', latestUpdated || '--');
+  container.innerHTML = order.map(key => renderKeyDetailCard(key)).join('');
+}
+
+function renderKeyDetailCard(key) {
+  const color = safeKeyColor(key.color);
+  const data = state.usageData[key.id];
+  const isHidden = key.is_active === false;
+  const isLoading = state.pendingRefreshKeyIds.has(key.id);
+  const inlineError = state.perKeyError[key.id];
+  const expanded = state.expandedKeyIds.has(key.id);
+  const confirmingDelete = state.deleteConfirmKeyId === key.id;
+
+  const currentPct = data && data.ok && data.total_count
+    ? clampPercent((data.used_count / data.total_count) * 100)
+    : 0;
+  const weeklyPct = data && data.ok && data.weekly_total_count
+    ? clampPercent((data.weekly_used_count / data.weekly_total_count) * 100)
+    : 0;
+
+  const currentStatus = data && data.ok ? getStatus(currentPct) : 'normal';
+  const weeklyStatus = data && data.ok ? getStatus(weeklyPct) : 'normal';
+
+  const refreshSec = Math.max(1, Number(key.refresh_interval) || 20);
+  const subtitle = data && data.ok
+    ? `${escapeHtml(data.primary_model_name || t('unknown'))} · ${refreshSec}s · ${escapeHtml(formatRelative(parseLastUpdatedToEpoch(data.last_updated)))}`
+    : `${refreshSec}s ${t('refreshIntervalShort')}`;
+
+  const errorBlock = inlineError
+    ? `<div class="breakdown-inline-error">⚠ ${escapeHtml(inlineError)} <button data-action="retry" data-key-id="${escapeHtml(key.id)}">${t('retryNow')}</button></div>`
+    : '';
+
+  const confirmBubble = confirmingDelete
+    ? `<div class="breakdown-confirm-bubble">
+         <span>${t('deleteConfirm')}</span>
+         <button class="breakdown-action-btn danger" data-action="confirm-delete" data-key-id="${escapeHtml(key.id)}">${t('deleteConfirmYes')}</button>
+         <button class="breakdown-action-btn" data-action="cancel-delete" data-key-id="${escapeHtml(key.id)}">${t('deleteConfirmNo')}</button>
+       </div>`
+    : '';
+
+  const actions = isHidden
+    ? `<button class="breakdown-action-btn" data-action="toggle-hidden" data-key-id="${escapeHtml(key.id)}" title="${t('restoreKey')}">👁</button>`
+    : `
+      <button class="breakdown-action-btn" data-action="copy-mask" data-key-id="${escapeHtml(key.id)}" title="${t('copyToClipboard')}">📋</button>
+      <button class="breakdown-action-btn" data-action="refresh" data-key-id="${escapeHtml(key.id)}" title="${t('syncData')}">⟳</button>
+      <button class="breakdown-action-btn" data-action="edit" data-key-id="${escapeHtml(key.id)}" title="${t('editKey')}">✎</button>
+      <button class="breakdown-action-btn" data-action="toggle-hidden" data-key-id="${escapeHtml(key.id)}" title="${t('keyHidden')}">👁</button>
+      <button class="breakdown-action-btn danger" data-action="delete" data-key-id="${escapeHtml(key.id)}" title="${t('deleteConfirmYes')}">✕</button>
+      <button class="breakdown-action-btn" data-action="toggle-expand" data-key-id="${escapeHtml(key.id)}" title="${t(expanded ? 'collapseDetails' : 'expandDetails')}">${expanded ? '▴' : '▾'}</button>
+    `;
+
+  const metricRow = (label, pct, status, used, total, reset, kindSuffix) => `
+    <div class="breakdown-metric-row ${status} ${isLoading ? 'breakdown-shimmer' : ''}">
+      <span class="metric-label">${label}</span>
+      <div class="metric-bar"><div class="metric-bar-fill" style="width: ${pct}%;"></div></div>
+      <span class="metric-pct">${data && data.ok ? Math.round(pct) + '%' : '—'}</span>
+      <span class="metric-numbers">${data && data.ok ? `${formatNumber(used)} / ${formatNumber(total)}` : '—'}</span>
+      <span class="metric-reset" data-timestamp="${reset || 0}" data-reset-kind="${kindSuffix}">--:--:--</span>
+    </div>
+  `;
+
+  const modelRows = expanded && data && data.ok && Array.isArray(data.models)
+    ? data.models.map(model => `
+        <tr>
+          <td class="model-cell">${escapeHtml(model.name)}</td>
+          <td class="metric-cell used">${formatNumber(model.used_count)}</td>
+          <td class="metric-cell remaining">${formatNumber(model.remaining_count)}</td>
+          <td class="metric-cell total">${formatNumber(model.total_count)}</td>
+          <td class="window-cell">${escapeHtml(model.time_window || '--')}</td>
+        </tr>
+      `).join('')
+    : '';
+
+  const expandBlock = expanded
+    ? `<div class="breakdown-expand">
+         <div class="model-details-summary-left" style="margin-bottom: 6px;">
+           <span class="model-details-icon">🧩</span>
+           <span class="model-details-title">${t('modelBreakdown')}</span>
+         </div>
+         <table class="model-details-table">
+           <thead>
+             <tr>
+               <th>${t('modelName')}</th>
+               <th>${t('modelUsed')}</th>
+               <th>${t('modelRemaining')}</th>
+               <th>${t('modelTotal')}</th>
+               <th>${t('modelWindow')}</th>
+             </tr>
+           </thead>
+           <tbody>${modelRows || `<tr><td colspan="5" class="model-details-empty">${t('perModelEmpty')}</td></tr>`}</tbody>
+         </table>
+       </div>`
+    : '';
+
+  const cardCls = [
+    'breakdown-card',
+    isHidden ? 'disabled' : '',
+    inlineError ? 'error' : '',
+    expanded ? 'expanded' : '',
+  ].join(' ').trim();
+
+  return `
+    <article class="${cardCls}"
+             data-key-id="${escapeHtml(key.id)}"
+             draggable="${isHidden ? 'false' : 'true'}"
+             style="--key-color: ${color};">
+      <div class="breakdown-card-body">
+        <div class="breakdown-meta-row">
+          <span class="key-chip-dot" style="background: ${color};"></span>
+          <span class="name">${escapeHtml(key.name || t('unknown'))}</span>
+          <span class="mask">${escapeHtml(key.masked_key || '--')}</span>
+          <span class="subtitle">${subtitle}</span>
+          <span class="breakdown-actions">${actions}</span>
+        </div>
+        ${errorBlock}
+        ${metricRow(t('currentInterval'), currentPct, currentStatus, data?.used_count, data?.total_count, data?.reset_timestamp, 'current')}
+        ${metricRow(t('weeklyAggregate'), weeklyPct, weeklyStatus, data?.weekly_used_count, data?.weekly_total_count, data?.weekly_reset_timestamp, 'weekly')}
+        ${expandBlock}
+      </div>
+      ${confirmBubble}
+    </article>
+  `;
 }
 
 function renderModelDetails(data) {
@@ -1563,10 +1631,9 @@ const countdownTargets = [];
 
 function syncCountdownTargets() {
   countdownTargets.length = 0;
-  const windowCountdownEl = document.getElementById('window-countdown');
-  const weeklyCountdownEl = document.getElementById('weekly-countdown');
-  if (windowCountdownEl) countdownTargets.push(windowCountdownEl);
-  if (weeklyCountdownEl) countdownTargets.push(weeklyCountdownEl);
+  document.querySelectorAll('[data-timestamp]').forEach((el) => {
+    countdownTargets.push(el);
+  });
 }
 
 function startCountdownTimer() {
