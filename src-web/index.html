@@ -1700,6 +1700,18 @@ body {
         </div>
       </header>
 
+      <!-- KEY SWITCHER (multi-key only) -->
+      <nav id="key-switcher" class="key-switcher" role="tablist" style="display: none;" aria-label="API key switcher"></nav>
+
+      <!-- KEY HEADER STRIP (single-key view only) -->
+      <div id="key-header-strip" class="key-header-strip dashboard-section" style="display: none;">
+        <span class="strip-dot" id="strip-dot"></span>
+        <span class="strip-name" id="strip-name">--</span>
+        <span class="strip-mask" id="strip-mask">--</span>
+        <span class="strip-sub" id="strip-sub">--</span>
+        <span class="breakdown-actions" id="strip-actions" style="opacity: 1; margin-left: auto;"></span>
+      </div>
+
       <div class="stats-container">
         <!-- Current Window Card -->
         <section id="current-card" class="cyber-card normal">
@@ -1804,6 +1816,18 @@ body {
           </div>
         </section>
       </div>
+
+      <!-- PER-KEY BREAKDOWN (aggregate view only) -->
+      <section id="per-key-breakdown" class="dashboard-section" style="display: none;">
+        <h3 class="card-title" style="margin: 16px 0 8px;">
+          <span class="icon">🗝️</span>
+          <span data-i18n="breakdownTitle">PER-KEY BREAKDOWN</span>
+        </h3>
+        <div id="breakdown-list"></div>
+        <div id="all-hidden-hint" class="all-hidden-hint" data-i18n="allKeysHidden" style="display: none;">
+          All keys are hidden. Click 👁 to restore.
+        </div>
+      </section>
 
       <!-- Model Details -->
       <section id="model-details-card" class="cyber-card model-details-card">
@@ -1980,6 +2004,7 @@ body {
       </div>
     </div>
   </div>
+  <div id="copy-toast" class="copy-toast" role="status" aria-live="polite">--</div>
   <script src="app.js"></script>
 </body>
 </html>
