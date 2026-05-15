@@ -5,7 +5,16 @@ use std::fs;
 use std::path::PathBuf;
 use uuid::Uuid;
 
+const CONFIG_DIR_ENV: &str = "MINIMAX_MONITOR_CONFIG_DIR";
+
 fn get_config_path() -> Option<PathBuf> {
+    // 首先检查环境变量覆盖
+    if let Some(dir) = std::env::var(CONFIG_DIR_ENV).ok() {
+        if !dir.is_empty() {
+            return Some(PathBuf::from(dir).join("config.json"));
+        }
+    }
+    // 默认使用标准配置目录
     dirs::config_dir().map(|p| p.join("minimax-usage-monitor").join("config.json"))
 }
 

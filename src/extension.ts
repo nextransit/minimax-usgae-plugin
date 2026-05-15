@@ -41,6 +41,7 @@ type UsageViewModel = {
   statusLabel: string;
   primaryModelName: string;
   minRemainingModelName: string;
+  minRemainingWindow: "current" | "weekly";
   timeWindow: string;
   resetInLabel: string;
   resetTimestamp: number | null;
@@ -120,6 +121,7 @@ let cachedNonce: string | undefined;
 const emptyUsageViewModel = {
   primaryModelName: "",
   minRemainingModelName: "",
+  minRemainingWindow: "current",
   timeWindow: "",
   resetInLabel: "",
   resetTimestamp: null,
@@ -1063,7 +1065,7 @@ function renderDetailsPanelHtml(): string {
             <div class="risk-text">
               <h3>${i18n.riskTitle}</h3>
               <ul>
-                <li>${i18n.riskRemaining}${minRemainingCount} 次</li>
+                <li>${latestVm.minRemainingWindow === "weekly" ? "本周累计剩余仅 " : i18n.riskRemaining}${minRemainingCount} 次</li>
                 <li>${minRemainingCount <= 5 ? i18n.riskExhausted : i18n.riskFast}</li>
               </ul>
             </div>
@@ -2254,9 +2256,23 @@ function buildUsageViewModel(result: RemainsResult): UsageViewModel {
       remainingCount,
       usedCount,
     }];
-  const minRemainingModel = riskSourceModels.reduce((minModel, currentModel) =>
+  const riskSources: Array<{ name: string; remainingCount: number; window: "current" | "weekly" }> = [
+    ...riskSourceModels.map((model) => ({
+      name: model.name,
+      remainingCount: model.remainingCount,
+      window: "current" as const,
+    })),
+  ];
+  if (hasWeeklyQuota) {
+    riskSources.push({
+      name: primaryModel.model_name ?? strings.unknownModel,
+      remainingCount: weeklyRemainingCount,
+      window: "weekly",
+    });
+  }
+  const minRemainingModel = riskSources.reduce((minModel, currentModel) =>
     currentModel.remainingCount < minModel.remainingCount ? currentModel : minModel,
-  riskSourceModels[0]);
+  riskSources[0]);
 
   return {
     ok: result.ok,
@@ -2264,6 +2280,7 @@ function buildUsageViewModel(result: RemainsResult): UsageViewModel {
     raw: result.raw,
     primaryModelName: primaryModel.model_name ?? "",
     minRemainingModelName: minRemainingModel.name,
+    minRemainingWindow: minRemainingModel.window,
     timeWindow: hasTimeWindow
       ? `${formatDateTime(primaryModel.start_time as number)} ~ ${formatTime(primaryModel.end_time as number)}${strings.timeZoneSuffix}`
       : "",

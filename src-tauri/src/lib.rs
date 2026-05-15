@@ -1,7 +1,7 @@
 mod api;
-mod api_key_store;
+pub mod api_key_store;
 mod commands;
-mod config;
+pub mod config;
 mod notifications;
 mod state;
 mod tray;
@@ -14,6 +14,10 @@ use tauri::{AppHandle, Emitter, Manager};
 
 pub use commands::*;
 pub use state::{ApiKeyEntry, AppConfig, AppState, ModelDetail, UsageData};
+
+// Re-export for testing
+pub use api_key_store::{save_key_for_entry, load_key_for_entry, delete_key_for_entry};
+pub use config::{load_config, save_config};
 
 // Include frontend resources directly using include_str!
 // This ensures the frontend is bundled with the binary
@@ -111,18 +115,28 @@ async fn refresh_usage_data(
             let _ = app_h.emit("usage-updated", (&key_id, data.clone()));
 
             if data.ok {
-                let min_remaining = if !data.models.is_empty() {
-                    data.models
-                        .iter()
-                        .map(|m| m.remaining_count)
-                        .min()
-                        .or(data.remaining_count)
-                } else {
-                    data.remaining_count
-                };
+                let mut risk_candidates = Vec::new();
+                if !data.models.is_empty() {
+                    if let Some(current_min) = data.models.iter().map(|m| m.remaining_count).min() {
+                        risk_candidates.push(current_min);
+                    }
+                } else if let Some(remaining) = data.remaining_count {
+                    risk_candidates.push(remaining);
+                }
+                if let Some(weekly_remaining) = data.weekly_remaining_count {
+                    risk_candidates.push(weekly_remaining);
+                }
+                let min_remaining = risk_candidates.into_iter().min();
 
                 if let Some(min_remaining_count) = min_remaining {
-                    notifications::check_and_notify(app_h, min_remaining_count);
+                    let key_name = {
+                        let config = state.config.lock().unwrap();
+                        config.api_keys.iter()
+                            .find(|e| e.id == key_id)
+                            .map(|e| e.name.clone())
+                            .unwrap_or_else(|| key_id.clone())
+                    };
+                    notifications::check_and_notify(app_h, &key_id, &key_name, min_remaining_count);
                 }
             }
         }

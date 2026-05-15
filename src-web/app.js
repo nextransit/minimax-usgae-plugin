@@ -11,11 +11,22 @@ let uiReady = false;
 let modalOpenIntentDepth = 0;
 
 function withUserModalIntent(action) {
-  if (!uiReady) return;
-  if (document.visibilityState !== 'visible') return;
-  if (typeof document.hasFocus === 'function' && !document.hasFocus()) return;
+  console.log('[withUserModalIntent] uiReady:', uiReady, 'visibility:', document.visibilityState, 'hasFocus:', document.hasFocus ? document.hasFocus() : 'N/A');
+  if (!uiReady) {
+    console.log('[withUserModalIntent] REJECTED: uiReady is false');
+    return;
+  }
+  if (document.visibilityState !== 'visible') {
+    console.log('[withUserModalIntent] REJECTED: document not visible');
+    return;
+  }
+  if (typeof document.hasFocus === 'function' && !document.hasFocus()) {
+    console.log('[withUserModalIntent] REJECTED: document not focused');
+    return;
+  }
   modalOpenIntentDepth += 1;
   try {
+    console.log('[withUserModalIntent] executing action');
     return action();
   } finally {
     modalOpenIntentDepth = Math.max(0, modalOpenIntentDepth - 1);
@@ -23,8 +34,35 @@ function withUserModalIntent(action) {
 }
 
 function runTrustedModalAction(event, action) {
-  if (!event?.isTrusted) return;
+  console.log('[runTrustedModalAction] isTrusted:', event?.isTrusted, 'uiReady:', uiReady);
+  if (!event?.isTrusted) {
+    console.log('[runTrustedModalAction] REJECTED: event not trusted');
+    return;
+  }
   withUserModalIntent(action);
+}
+
+function runSystemModalAction(action, retries = 3) {
+  const hasFocus = typeof document.hasFocus === 'function' ? document.hasFocus() : true;
+  console.log('[runSystemModalAction] uiReady:', uiReady, 'visibility:', document.visibilityState, 'hasFocus:', hasFocus, 'retries:', retries);
+  if (!uiReady) {
+    console.log('[runSystemModalAction] REJECTED: uiReady is false');
+    return;
+  }
+  if (document.visibilityState !== 'visible' || !hasFocus) {
+    if (retries > 0) {
+      setTimeout(() => runSystemModalAction(action, retries - 1), 80);
+      return;
+    }
+    console.log('[runSystemModalAction] REJECTED: document not ready for modal');
+    return;
+  }
+  modalOpenIntentDepth += 1;
+  try {
+    return action();
+  } finally {
+    modalOpenIntentDepth = Math.max(0, modalOpenIntentDepth - 1);
+  }
 }
 
 function canOpenTransientDialog() {
@@ -199,6 +237,7 @@ const i18n = {
     reset: '清除缓存',
     riskTitle: '风险提示',
     riskRemaining: '最小剩余请求次数仅 ',
+    riskRemainingWeekly: '本周最小剩余请求次数仅 ',
     riskExhausted: '额度即将耗尽，建议立即降低请求频率或切换模型！',
     riskFast: '消耗较快，请注意使用配额以避免被限流。',
     languageSwitchLabel: '语言',
@@ -264,6 +303,7 @@ const i18n = {
     reset: 'RESET',
     riskTitle: 'Risk Warning',
     riskRemaining: 'Minimum remaining requests only ',
+    riskRemainingWeekly: 'Minimum weekly remaining requests only ',
     riskExhausted: 'Quota is almost exhausted. Suggest lowering request frequency or switching models!',
     riskFast: 'Consuming quickly. Please monitor usage to avoid rate limits.',
     languageSwitchLabel: 'Language',
@@ -454,6 +494,11 @@ async function setupEventListeners() {
     return;
   });
 
+  // Listen for show key management modal event (from tray menu)
+  await tauriListen('show-key-management', () => {
+    runSystemModalAction(showKeyManagementModal);
+  });
+
   // Reset transient UI whenever the native shell is about to reveal the window.
   await tauriListen('app-window-will-show', () => {
     closeTransientDialogs();
@@ -493,8 +538,9 @@ function showStartupError(error, options = {}) {
 function setupUiHandlers() {
   if (uiHandlersInitialized) return;
   uiHandlersInitialized = true;
-  // Set API Key button
+  // Set API Key button - 直接调用，打开对话框
   document.getElementById('btn-set-key')?.addEventListener('click', (e) => {
+    console.log('[btn-set-key] clicked');
     runTrustedModalAction(e, showApiKeyDialog);
   });
 
@@ -512,8 +558,9 @@ function setupUiHandlers() {
   // Refresh button
   document.getElementById('btn-refresh')?.addEventListener('click', refreshAllUsage);
 
-  // Config key button
+  // Config key button - 直接调用
   document.getElementById('btn-config-key')?.addEventListener('click', (e) => {
+    console.log('[btn-config-key] clicked');
     runTrustedModalAction(e, showKeyManagementModal);
   });
 
@@ -558,7 +605,8 @@ function setupUiHandlers() {
     }
   });
 
-  document.getElementById('key-list')?.addEventListener('click', (e) => {
+  // 使用事件委托 - 在 key-management-modal 上绑定事件，处理动态生成的 key-list
+  document.getElementById('key-management-modal')?.addEventListener('click', (e) => {
     if (!e.isTrusted) return;
     const editBtn = e.target.closest('.js-edit-key');
     if (editBtn) {
@@ -645,8 +693,8 @@ async function saveApiKey() {
     await invokeWithTimeout('cmd_add_api_key', {
       name: 'Key ' + (state.apiKeys.length + 1),
       color: '#00d4ff',
-      api_key: apiKey,
-      refresh_interval: settings.refresh_interval_seconds || 20
+      apiKey: apiKey,
+      refreshInterval: settings.refresh_interval_seconds || 20
     }, WRITE_IPC_TIMEOUT_MS);
     hideApiKeyDialog();
     await loadApiKeys();
@@ -676,6 +724,8 @@ async function clearApiKey() {
 }
 
 function showApiKeyDialog() {
+  console.log('[showApiKeyDialog] uiReady:', uiReady, 'modalOpenIntentDepth:', modalOpenIntentDepth);
+  console.log('[showApiKeyDialog] visibility:', document.visibilityState, 'hasFocus:', document.hasFocus());
   if (!canOpenTransientDialog()) return;
   // Guard: if init() hasn't completed yet, do nothing
   // (state.config is null before init finishes loading config and keys)
@@ -980,11 +1030,19 @@ function renderDashboard() {
   const remainingCandidates = [];
   state.apiKeys.forEach(key => {
     const data = state.usageData[key.id];
-    if (data && data.ok && typeof data.remaining_count === 'number') {
-      remainingCandidates.push({
-        remaining: data.remaining_count,
-        usedPercent: typeof data.used_percent === 'number' ? data.used_percent : null,
-      });
+    if (data && data.ok) {
+      if (typeof data.remaining_count === 'number') {
+        remainingCandidates.push({
+          remaining: data.remaining_count,
+          kind: 'current',
+        });
+      }
+      if (typeof data.weekly_remaining_count === 'number') {
+        remainingCandidates.push({
+          remaining: data.weekly_remaining_count,
+          kind: 'weekly',
+        });
+      }
     }
   });
   const minRemainingEntry = remainingCandidates.length > 0
@@ -1006,7 +1064,9 @@ function renderDashboard() {
 
       const riskWindowLabel = document.getElementById('risk-window-label');
       if (riskWindowLabel) {
-        const windowLabelText = t('riskRemaining');
+        const windowLabelText = minRemainingEntry.kind === 'weekly'
+          ? t('riskRemainingWeekly')
+          : t('riskRemaining');
         if (riskWindowLabel.textContent !== windowLabelText) {
           riskWindowLabel.textContent = windowLabelText;
         }
@@ -1310,20 +1370,39 @@ function renderKeyList() {
     return;
   }
 
-  container.innerHTML = state.apiKeys.map(key => {
-    const data = state.usageData[key.id];
-    const percent = data?.used_percent || 0;
-    const statusClass = percent >= 90 ? 'critical' : percent >= 70 ? 'warning' : 'normal';
-    return `
-      <div class="key-list-item">
-        <span class="key-color-dot" style="background: ${key.color}; width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;"></span>
-        <span class="key-name">${escapeHtml(key.name)}</span>
-        <span class="key-interval">${key.refresh_interval}s</span>
-        <button class="js-edit-key" data-key-id="${escapeHtml(key.id)}">Edit</button>
-        <button class="danger js-delete-key" data-key-id="${escapeHtml(key.id)}">Delete</button>
-      </div>
-    `;
-  }).join('');
+  const rows = state.apiKeys.map(key => `
+    <tr>
+      <td>
+        <div class="key-name-cell">
+          <span class="key-color-dot" style="background: ${escapeHtml(key.color || '#00d4ff')};"></span>
+          <div class="key-name-stack">
+            <div class="key-name" title="${escapeHtml(key.name || t('unknown'))}">${escapeHtml(key.name || t('unknown'))}</div>
+            <div class="key-time">${escapeHtml(formatKeyCreatedAt(key.created_at))} | ${escapeHtml(formatKeyInterval(key.refresh_interval))}</div>
+          </div>
+        </div>
+      </td>
+      <td><span class="key-mask">${escapeHtml(key.masked_key || '--')}</span></td>
+      <td class="key-table-actions">
+        <div class="key-row-actions">
+          <button class="key-action-button edit js-edit-key" data-key-id="${escapeHtml(key.id)}">Edit</button>
+          <button class="key-action-button delete js-delete-key" data-key-id="${escapeHtml(key.id)}">Delete</button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+
+  container.innerHTML = `
+    <table class="key-table">
+      <thead>
+        <tr>
+          <th class="key-table-name">Key_Name Time</th>
+          <th class="key-table-mask">Key Mask</th>
+          <th class="key-table-actions">Edit/Delete</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
 }
 
 function openKeyEditDialog(keyId = null) {
@@ -1345,8 +1424,10 @@ function openKeyEditDialog(keyId = null) {
       nameInput.value = key.name;
       colorInput.value = key.color;
       intervalInput.value = key.refresh_interval;
-      apiKeyInput.value = '';
-      apiKeyInput.placeholder = state.language === 'zh-CN' ? 'Leave empty to keep current key' : 'Leave empty to keep current key';
+      apiKeyInput.type = 'text';
+      apiKeyInput.value = key.masked_key || '';
+      apiKeyInput.dataset.maskedKey = key.masked_key || '';
+      apiKeyInput.placeholder = key.masked_key || 'API Key';
     }
   } else {
     // Add mode
@@ -1355,7 +1436,9 @@ function openKeyEditDialog(keyId = null) {
     nameInput.value = '';
     colorInput.value = '#00d4ff';
     intervalInput.value = '20';
+    apiKeyInput.type = 'password';
     apiKeyInput.value = '';
+    apiKeyInput.dataset.maskedKey = '';
     apiKeyInput.placeholder = 'API Key';
   }
 
@@ -1381,26 +1464,43 @@ async function saveKeyEdit() {
   const name = document.getElementById('key-edit-name').value.trim();
   const color = document.getElementById('key-edit-color').value;
   const interval = parseInt(document.getElementById('key-edit-interval').value) || 20;
-  const apiKey = document.getElementById('key-edit-api-key').value.trim();
+  const apiKeyInput = document.getElementById('key-edit-api-key');
+  const maskedKey = apiKeyInput.dataset.maskedKey || '';
+  const rawApiKey = apiKeyInput.value.trim();
+  const apiKey = id && rawApiKey === maskedKey ? '' : rawApiKey;
 
+  console.log('[saveKeyEdit] Starting, id:', id, 'name:', name);
+  
   if (!name) {
+    console.warn('[saveKeyEdit] Name is empty');
     alert(state.language === 'zh-CN' ? 'Please enter a name' : 'Please enter a name');
+    return;
+  }
+
+  if (!tauriInvoke) {
+    console.error('[saveKeyEdit] Tauri API not ready');
+    alert(state.language === 'zh-CN' ? 'System not ready, please wait' : 'System not ready, please wait');
     return;
   }
 
   try {
     if (id) {
+      console.log('[saveKeyEdit] Updating existing key:', id);
       await invokeWithTimeout('cmd_update_api_key', {
-        id, name, color, refresh_interval: interval, api_key: apiKey || null
+        id, name, color, refreshInterval: interval, apiKey: apiKey || null
       }, WRITE_IPC_TIMEOUT_MS);
+      console.log('[saveKeyEdit] Update successful');
     } else {
       if (!apiKey) {
+        console.warn('[saveKeyEdit] API key is empty');
         alert(state.language === 'zh-CN' ? 'Please enter an API key' : 'Please enter an API key');
         return;
       }
-      await invokeWithTimeout('cmd_add_api_key', {
-        name, color, api_key: apiKey, refresh_interval: interval
+      console.log('[saveKeyEdit] Adding new key, name:', name);
+      const result = await invokeWithTimeout('cmd_add_api_key', {
+        name, color, apiKey: apiKey, refreshInterval: interval
       }, WRITE_IPC_TIMEOUT_MS);
+      console.log('[saveKeyEdit] Add successful, result:', result);
     }
     closeKeyEditDialog();
     await loadApiKeys();
@@ -1409,21 +1509,113 @@ async function saveKeyEdit() {
     scheduleRender();
     runInBackground('refresh after key edit', refreshAllUsage);
   } catch (e) {
+    console.error('[saveKeyEdit] Error:', e);
     alert(state.language === 'zh-CN' ? 'Failed to save: ' + e : 'Failed to save: ' + e);
   }
 }
 
+function formatKeyInterval(value) {
+  const interval = Number(value);
+  if (!Number.isFinite(interval) || interval <= 0) return '--s';
+  return `${interval}s`;
+}
+
+function formatKeyCreatedAt(value) {
+  const timestamp = Number(value);
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return '--';
+  const date = new Date(timestamp * 1000);
+  if (Number.isNaN(date.getTime())) return '--';
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hour = String(date.getHours()).padStart(2, '0');
+  const minute = String(date.getMinutes()).padStart(2, '0');
+  return `${year}-${month}-${day} ${hour}:${minute}`;
+}
+
+// 显示自定义确认对话框
+function showConfirmDialog(title, message, onConfirm) {
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); display: flex; align-items: center; justify-content: center; z-index: 99999;';
+  
+  const dialog = document.createElement('div');
+  dialog.style.cssText = 'background: #1a1a2e; padding: 24px; border-radius: 12px; max-width: 400px; text-align: center;';
+  
+  dialog.innerHTML = `
+    <h3 style="margin: 0 0 16px 0; color: white;">${title}</h3>
+    <p style="margin: 0 0 24px 0; color: #94a3b8;">${message}</p>
+    <div style="display: flex; gap: 12px; justify-content: center;">
+      <button id="confirm-cancel" style="padding: 10px 24px; background: #333; color: white; border: none; border-radius: 6px; cursor: pointer;">Cancel</button>
+      <button id="confirm-ok" style="padding: 10px 24px; background: #ff2e63; color: white; border: none; border-radius: 6px; cursor: pointer;">Delete</button>
+    </div>
+  `;
+  
+  overlay.appendChild(dialog);
+  document.body.appendChild(overlay);
+  
+  document.getElementById('confirm-cancel').onclick = () => {
+    document.body.removeChild(overlay);
+    onConfirm(false);
+  };
+  
+  document.getElementById('confirm-ok').onclick = () => {
+    document.body.removeChild(overlay);
+    onConfirm(true);
+  };
+  
+  overlay.onclick = (e) => {
+    if (e.target === overlay) {
+      document.body.removeChild(overlay);
+      onConfirm(false);
+    }
+  };
+}
+
 async function deleteKey(keyId) {
-  if (!confirm(state.language === 'zh-CN' ? 'Delete this API key?' : 'Delete this API key?')) return;
-  try {
-    await invokeWithTimeout('cmd_delete_api_key', { id: keyId }, WRITE_IPC_TIMEOUT_MS);
-    await loadApiKeys();
-    await loadAllUsageData();
-    renderKeyList();
-    scheduleRender();
-  } catch (e) {
-    alert(state.language === 'zh-CN' ? 'Failed to delete: ' + e : 'Failed to delete: ' + e);
-  }
+  console.log('[deleteKey] Starting, keyId:', keyId);
+  
+  // 使用自定义确认框而不是 confirm()
+  return new Promise((resolve) => {
+    showConfirmDialog(
+      'Delete API Key?',
+      'This action cannot be undone.',
+      async (confirmed) => {
+        console.log('[deleteKey] Confirm result:', confirmed);
+        
+        if (!confirmed) {
+          console.log('[deleteKey] User cancelled');
+          resolve();
+          return;
+        }
+
+        console.log('[deleteKey] User confirmed, tauriInvoke:', typeof tauriInvoke);
+        
+        if (!tauriInvoke) {
+          console.error('[deleteKey] Tauri API not ready');
+          alert(state.language === 'zh-CN' ? 'System not ready, please wait' : 'System not ready, please wait');
+          resolve();
+          return;
+        }
+        
+        console.log('[deleteKey] Calling backend with { id:', keyId, '}');
+        
+        try {
+          console.log('[deleteKey] Invoking cmd_delete_api_key...');
+          const result = await invokeWithTimeout('cmd_delete_api_key', { id: keyId }, WRITE_IPC_TIMEOUT_MS);
+          console.log('[deleteKey] Delete successful, result:', result);
+          await loadApiKeys();
+          await loadAllUsageData();
+          renderKeyList();
+          scheduleRender();
+        } catch (e) {
+          console.error('[deleteKey] Error:', e);
+          alert(state.language === 'zh-CN' ? 'Failed to delete: ' + e : 'Failed to delete: ' + e);
+        } finally {
+          resolve();
+        }
+      }
+    );
+  });
 }
 
 function formatCountdown(timestamp) {

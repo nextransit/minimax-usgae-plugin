@@ -1,7 +1,56 @@
 use crate::state::{ApiKeyEntry, AppConfig, AppState, UsageData};
+use serde::Serialize;
 use std::collections::HashMap;
 use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_autostart::ManagerExt;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ApiKeyView {
+    pub id: String,
+    pub name: String,
+    pub color: String,
+    pub keychain_service: String,
+    pub keychain_account: String,
+    pub refresh_interval: u32,
+    pub created_at: i64,
+    pub is_active: bool,
+    pub masked_key: Option<String>,
+}
+
+fn mask_api_key(key: &str) -> String {
+    let chars: Vec<char> = key.chars().collect();
+    let len = chars.len();
+    if len == 0 {
+        return String::new();
+    }
+    if len > 10 {
+        let prefix: String = chars.iter().take(6).collect();
+        let suffix: String = chars.iter().skip(len.saturating_sub(4)).collect();
+        return format!("{}...{}", prefix, suffix);
+    }
+    if len <= 4 {
+        return "*".repeat(len);
+    }
+    let prefix: String = chars.iter().take(2).collect();
+    let suffix: String = chars.iter().skip(len.saturating_sub(2)).collect();
+    format!("{}...{}", prefix, suffix)
+}
+
+fn api_key_view(entry: ApiKeyEntry) -> ApiKeyView {
+    let masked_key = crate::api_key_store::load_key_for_entry(&entry)
+        .map(|key| mask_api_key(&key));
+    ApiKeyView {
+        id: entry.id,
+        name: entry.name,
+        color: entry.color,
+        keychain_service: entry.keychain_service,
+        keychain_account: entry.keychain_account,
+        refresh_interval: entry.refresh_interval,
+        created_at: entry.created_at,
+        is_active: entry.is_active,
+        masked_key,
+    }
+}
 
 #[tauri::command]
 pub fn cmd_debug_state(state: State<AppState>) -> String {
@@ -130,8 +179,15 @@ pub fn cmd_mark_first_run_complete(state: State<AppState>) -> Result<(), String>
 }
 
 #[tauri::command]
-pub fn cmd_get_api_keys(state: State<'_, AppState>) -> Vec<ApiKeyEntry> {
-    state.config.lock().unwrap().api_keys.clone()
+pub fn cmd_get_api_keys(state: State<'_, AppState>) -> Vec<ApiKeyView> {
+    state.config
+        .lock()
+        .unwrap()
+        .api_keys
+        .clone()
+        .into_iter()
+        .map(api_key_view)
+        .collect()
 }
 
 #[tauri::command]
@@ -240,8 +296,11 @@ pub fn cmd_delete_api_key(
     state: State<'_, AppState>,
     id: String,
 ) -> Result<(), String> {
+    log::info!("cmd_delete_api_key called with id: {}", id);
+    
     let entry = {
         let config = state.config.lock().unwrap();
+        log::info!("Current api_keys count: {}", config.api_keys.len());
         config.api_keys.iter().find(|e| e.id == id).cloned()
     };
 
@@ -269,6 +328,7 @@ pub fn cmd_delete_api_key(
     }
 
     crate::tray::update_tray_menu(&app, &state);
+    log::info!("cmd_delete_api_key completed successfully for id: {}", id);
     Ok(())
 }
 
@@ -445,4 +505,20 @@ pub async fn cmd_refresh_all_usage_data(
         return Err(format!("All usage refreshes failed: {}", summary));
     }
     Ok(usage)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mask_api_key;
+
+    #[test]
+    fn mask_api_key_keeps_first_6_and_last_4_for_long_keys() {
+        assert_eq!(mask_api_key("abcdef1234567890wxyz"), "abcdef...wxyz");
+    }
+
+    #[test]
+    fn mask_api_key_handles_short_keys_without_exposing_full_value() {
+        assert_eq!(mask_api_key("abcd"), "****");
+        assert_eq!(mask_api_key("abcdef"), "ab...ef");
+    }
 }

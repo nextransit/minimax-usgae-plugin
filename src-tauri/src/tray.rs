@@ -263,7 +263,11 @@ pub fn update_tray_menu(app: &AppHandle, state: &AppState) {
     let api_key = state.api_key.lock().unwrap();
     let i18n = tray_i18n(&config.language);
 
-    let primary_usage = usage.values().next();
+    let primary_usage = config
+        .api_keys
+        .iter()
+        .find_map(|entry| usage.get(&entry.id))
+        .or_else(|| usage.values().next());
 
     let status_text = if let Some(ref data) = primary_usage {
         build_status_text(data, config.show_percent_in_tray)
@@ -516,25 +520,38 @@ pub fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                     app.exit(0);
                 }
                 "refresh" => {
-                    let state: State<AppState> = app.state();
-                    let api_key = state.api_key.lock().unwrap().clone();
-                    if let Some(key) = api_key {
-                        tauri::async_runtime::spawn({
-                            let app_h_clone = app_h.clone();
-                            async move {
-                                match crate::api::fetch_minimax_usage(&key, 15000).await {
-                                    Ok(data) => {
-                                        let state: State<AppState> = app_h_clone.state();
+                    // Multi-key refresh: iterate over all active keys
+                    let keys_to_fetch: Vec<(String, String)> = {
+                        let state: State<AppState> = app.state();
+                        let config = state.config.lock().unwrap();
+                        config
+                            .api_keys
+                            .iter()
+                            .filter(|e| e.is_active)
+                            .filter_map(|e| {
+                                crate::api_key_store::load_key_for_entry(e).map(|key| (e.id.clone(), key))
+                            })
+                            .collect()
+                    };
+
+                    for (key_id, api_key) in keys_to_fetch {
+                        let app_h_clone = app_h.clone();
+                        let key_id_clone = key_id.clone();
+                        tauri::async_runtime::spawn(async move {
+                            match crate::api::fetch_minimax_usage(&api_key, 15000).await {
+                                Ok(data) => {
+                                    let state: State<AppState> = app_h_clone.state();
+                                    {
                                         let mut usage = state.usage_data.lock().unwrap();
-                                        usage.insert("default".to_string(), data.clone());
-                                        drop(usage);
-                                        update_tray_menu(&app_h_clone, &state);
-                                        let _ = app_h_clone.emit("usage-updated", data);
+                                        usage.insert(key_id_clone.clone(), data.clone());
                                     }
-                                    Err(e) => {
-                                        log::error!("Refresh failed: {}", e);
-                                        let _ = app_h_clone.emit("usage-error", e.to_string());
-                                    }
+                                    update_tray_menu(&app_h_clone, &state);
+                                    // Use multi-key format: [keyId, data]
+                                    let _ = app_h_clone.emit("usage-updated", (&key_id_clone, data));
+                                }
+                                Err(e) => {
+                                    log::error!("Refresh failed for key {}: {}", key_id_clone, e);
+                                    let _ = app_h_clone.emit("usage-error", (&key_id_clone, e.to_string()));
                                 }
                             }
                         });
@@ -547,22 +564,15 @@ pub fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                     if let Some(window) = app.get_webview_window("main") {
                         let _ = window.show();
                         let _ = window.set_focus();
+                        // 发送事件让前端打开 key management modal
+                        let _ = window.emit("show-key-management", ());
                     }
                 }
                 "clear_key" => {
                     let state: State<AppState> = app.state();
-                    if let Err(e) = crate::api_key_store::clear_api_key() {
+                    if let Err(e) = crate::commands::cmd_clear_api_key(app.clone(), state) {
                         log::error!("Failed to clear API key from tray action: {}", e);
                     }
-                    {
-                        let mut api_key = state.api_key.lock().unwrap();
-                        *api_key = None;
-                    }
-                    {
-                        let mut usage = state.usage_data.lock().unwrap();
-                        usage.clear();
-                    }
-                    update_tray_menu(app, &state);
                 }
                 "toggle_show_percent" => {
                     let state: State<AppState> = app.state();
