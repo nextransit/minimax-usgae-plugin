@@ -735,6 +735,8 @@ function setupUiHandlers() {
   // Cmd/Ctrl + 1..9 → 切换 key
   document.addEventListener('keydown', (e) => {
     if (!(e.metaKey || e.ctrlKey)) return;
+    const tag = (e.target && e.target.tagName) || '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target && e.target.isContentEditable)) return;
     const n = Number(e.key);
     if (!Number.isFinite(n) || n < 1 || n > 9) return;
     const visible = state.apiKeys || [];
