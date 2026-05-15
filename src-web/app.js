@@ -1628,8 +1628,13 @@ function bindReorderHandlers() {
     if (!dragState.active) return;
     e.preventDefault();
     const containerEl = origin === 'switcher' ? switcher : breakdown;
-    const selector = origin === 'switcher' ? '.key-chip[draggable="true"]' : '.breakdown-card[draggable="true"]';
-    const newOrder = [...containerEl.querySelectorAll(selector)].map(el => el.getAttribute('data-key-id'));
+    // Collect ALL cards/chips with a real key id (including hidden breakdown cards
+    // whose draggable="false"). Otherwise cmd_reorder_api_keys would receive an
+    // incomplete id list and the backend would drop the omitted keys from config.
+    const selector = origin === 'switcher' ? '.key-chip[data-key-id]' : '.breakdown-card[data-key-id]';
+    const newOrder = [...containerEl.querySelectorAll(selector)]
+      .map(el => el.getAttribute('data-key-id'))
+      .filter(id => id && id !== 'ALL');
     dragState.source?.classList.remove('dragging');
     dragState.active = false;
     dragState.source = null;
