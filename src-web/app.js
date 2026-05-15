@@ -1350,6 +1350,93 @@ function renderKeyDetailCard(key) {
   `;
 }
 
+function renderSingleKeyView(keyId) {
+  const key = getKeyById(keyId);
+  if (!key) {
+    state.selectedKeyId = 'ALL';
+    try { localStorage.setItem('lastSelectedKeyId', 'ALL'); } catch (_) { /* ignore */ }
+    scheduleRender();
+    return;
+  }
+
+  const color = safeKeyColor(key.color);
+  const glow = hexToRgba(color, 0.35);
+  document.documentElement.style.setProperty('--key-color', color);
+  document.documentElement.style.setProperty('--key-glow', glow);
+
+  const stripDot = document.getElementById('strip-dot');
+  if (stripDot) stripDot.style.background = color;
+  setText('strip-name', key.name || t('unknown'));
+  setText('strip-mask', key.masked_key || '--');
+  const data = state.usageData[key.id];
+  const refreshSec = Math.max(1, Number(key.refresh_interval) || 20);
+  const sub = data && data.ok
+    ? `${data.primary_model_name || t('unknown')} · ${refreshSec}s · ${formatRelative(parseLastUpdatedToEpoch(data.last_updated))}`
+    : `${refreshSec}s ${t('refreshIntervalShort')}`;
+  setText('strip-sub', sub);
+
+  const stripActions = document.getElementById('strip-actions');
+  if (stripActions) {
+    stripActions.innerHTML = `
+      <button class="breakdown-action-btn" data-action="refresh" data-key-id="${escapeHtml(key.id)}" title="${t('syncData')}">⟳</button>
+      <button class="breakdown-action-btn" data-action="edit" data-key-id="${escapeHtml(key.id)}" title="${t('editKey')}">✎</button>
+      <button class="breakdown-action-btn danger" data-action="delete" data-key-id="${escapeHtml(key.id)}" title="${t('deleteConfirmYes')}">✕</button>
+    `;
+  }
+
+  const inlineError = state.perKeyError[key.id];
+
+  setText('primary-model', data && data.ok ? (data.primary_model_name || t('unknown')) : t('unknown'));
+  setText('interval-label', data && data.ok ? (data.interval_label || t('na')) : (inlineError ? t('syncFailed') : t('waitingData')));
+
+  const currentPercent = data && data.ok && data.total_count
+    ? clampPercent((data.used_count / data.total_count) * 100)
+    : 0;
+  const currentStatus = data && data.ok ? getStatus(currentPercent) : 'normal';
+
+  setText('current-used', data && data.ok ? formatNumber(data.used_count) : '—');
+  setFlipNumber('current-remaining-container', 'current-remaining', data && data.ok ? formatNumber(data.remaining_count) : '—');
+  setText('current-total', data && data.ok ? formatNumber(data.total_count) : '—');
+  setText('current-percent', data && data.ok ? `${Math.round(currentPercent)}%` : '--%');
+  updateProgressBar('current-card', 'current-progress', currentPercent, currentStatus);
+  updateRemainingBreath('current-remaining', 'current-remaining-wrapper', currentStatus);
+  if (data && data.reset_timestamp) {
+    setElementAttr(document.getElementById('window-countdown'), 'data-timestamp', data.reset_timestamp);
+  }
+
+  const weeklyPercent = data && data.ok && data.weekly_total_count
+    ? clampPercent((data.weekly_used_count / data.weekly_total_count) * 100)
+    : 0;
+  const weeklyStatus = data && data.ok ? getStatus(weeklyPercent) : 'normal';
+
+  setText('weekly-used', data && data.ok ? formatNumber(data.weekly_used_count) : '—');
+  setFlipNumber('weekly-remaining-container', 'weekly-remaining', data && data.ok ? formatNumber(data.weekly_remaining_count) : '—');
+  setText('weekly-total', data && data.ok ? formatNumber(data.weekly_total_count) : '—');
+  setText('weekly-percent', data && data.ok ? `${Math.round(weeklyPercent)}%` : '--%');
+  updateProgressBar('weekly-card', 'weekly-progress', weeklyPercent, weeklyStatus);
+  updateRemainingBreath('weekly-remaining', 'weekly-remaining-wrapper', weeklyStatus);
+  if (data && data.weekly_reset_timestamp) {
+    setElementAttr(document.getElementById('weekly-countdown'), 'data-timestamp', data.weekly_reset_timestamp);
+  }
+
+  const riskCard = document.getElementById('risk-alert-card');
+  if (data && data.ok && typeof data.remaining_count === 'number' && data.remaining_count <= 20) {
+    const isCritical = data.remaining_count <= 5;
+    setText('risk-window-label', t('riskRemaining'));
+    setText('risk-remaining-percent', String(data.remaining_count));
+    setText('risk-message', t(isCritical ? 'riskExhausted' : 'riskFast'));
+    document.getElementById('risk-icon').textContent = isCritical ? '🚨' : '⚠️';
+    setElementClass(riskCard, `cyber-card risk-alert ${isCritical ? 'critical' : 'warning'}`);
+    setElementDisplay(riskCard, 'flex');
+  } else if (riskCard) {
+    setElementDisplay(riskCard, 'none');
+  }
+
+  renderModelDetails(data && data.ok ? data : null);
+
+  setText('last-updated', data && data.last_updated ? data.last_updated : '--');
+}
+
 function renderModelDetails(data) {
   const tbody = document.getElementById('model-table-body');
   if (!tbody) return;
