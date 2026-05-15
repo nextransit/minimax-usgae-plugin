@@ -1398,10 +1398,19 @@ function formatRelative(epochSeconds) {
 }
 
 function parseLastUpdatedToEpoch(lastUpdated) {
-  if (!lastUpdated) return 0;
-  const ts = Date.parse(lastUpdated);
-  if (!Number.isFinite(ts)) return 0;
-  return Math.floor(ts / 1000);
+  if (!lastUpdated || typeof lastUpdated !== 'string') return 0;
+  // Backend emits "YYYY-MM-DD HH:MM:SS" in local time (Local::now().format(...)).
+  // Parse explicitly to avoid relying on Date.parse's implementation-defined
+  // handling of the space-separated form.
+  const m = lastUpdated.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/);
+  if (m) {
+    const [, y, mo, d, h, mi, s] = m;
+    const ts = new Date(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(s)).getTime();
+    if (Number.isFinite(ts)) return Math.floor(ts / 1000);
+  }
+  const fallback = Date.parse(lastUpdated);
+  if (Number.isFinite(fallback)) return Math.floor(fallback / 1000);
+  return 0;
 }
 
 function safeKeyColor(color) {
