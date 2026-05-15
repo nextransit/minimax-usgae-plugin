@@ -686,6 +686,21 @@ function setupUiHandlers() {
       deleteKey(keyId);
     }
   });
+
+  // Key switcher: chip click & + ADD
+  document.getElementById('key-switcher')?.addEventListener('click', (e) => {
+    const chip = e.target.closest('.key-chip');
+    if (!chip) return;
+    if (chip.dataset.action === 'add-key') {
+      runTrustedModalAction(e, () => openKeyEditDialog());
+      return;
+    }
+    const keyId = chip.getAttribute('data-key-id');
+    if (!keyId) return;
+    state.selectedKeyId = keyId;
+    try { localStorage.setItem('lastSelectedKeyId', keyId); } catch (_) { /* ignore */ }
+    scheduleRender();
+  });
 }
 
 async function refreshAllUsage() {
@@ -988,6 +1003,7 @@ function render() {
     return;
   }
 
+  renderKeySwitcher();
   if (state.apiKeys.length === 0) {
     setElementDisplay(emptyNoKey, 'block');
     return;
@@ -996,6 +1012,95 @@ function render() {
   // Render dashboard
   setElementDisplay(dashboard, 'block');
   renderDashboard();
+}
+
+function renderKeySwitcher() {
+  const switcher = document.getElementById('key-switcher');
+  if (!switcher) return;
+
+  const visible = state.apiKeys || [];
+  // 不展示切换器：0 个 key 或只有 1 个 key 时
+  if (visible.length === 0) {
+    setElementDisplay(switcher, 'none');
+    switcher.innerHTML = '';
+    return;
+  }
+
+  setElementDisplay(switcher, 'flex');
+
+  const order = state.reorderDraft && state.reorderDraft.length === visible.length
+    ? state.reorderDraft.map(id => visible.find(k => k.id === id)).filter(Boolean)
+    : visible;
+
+  const chips = [];
+
+  // ALL chip — only when >1 keys
+  if (visible.length > 1) {
+    const agg = getAggregatePercent();
+    const palette = order.filter(k => k.is_active !== false).map(k => safeKeyColor(k.color));
+    let gradient;
+    if (palette.length === 0) {
+      gradient = 'var(--primary)';
+    } else if (palette.length === 1) {
+      gradient = palette[0];
+    } else {
+      const step = 360 / palette.length;
+      gradient = palette
+        .map((c, i) => `${c} ${Math.round(i * step)}deg ${Math.round((i + 1) * step)}deg`)
+        .join(', ');
+    }
+    const allSelected = state.selectedKeyId === 'ALL' ? 'selected' : '';
+    const allActiveKeys = order.filter(k => k.is_active !== false).length;
+    chips.push(`
+      <button type="button"
+              class="key-chip ${allSelected}"
+              data-key-id="ALL"
+              role="tab"
+              aria-selected="${state.selectedKeyId === 'ALL'}"
+              style="--key-color: var(--primary); --key-glow: rgba(0,212,255,0.35); --multi-gradient: ${gradient};">
+        <span class="key-chip-multi-dot"></span>
+        <span class="key-chip-name">${t('allKeys')}</span>
+        <span class="key-chip-pct">${allActiveKeys} ${t('keysActiveCount')} · ${Math.round(agg)}%</span>
+      </button>
+    `);
+  }
+
+  order.forEach(key => {
+    const color = safeKeyColor(key.color);
+    const glow = hexToRgba(color, 0.35);
+    const data = state.usageData[key.id];
+    const pct = data && data.ok && data.total_count
+      ? Math.round((data.used_count / data.total_count) * 100)
+      : 0;
+    const status = data && data.ok ? getStatus(pct) : 'normal';
+    const selected = state.selectedKeyId === key.id ? 'selected' : '';
+    const hiddenCls = key.is_active === false ? 'hidden-key' : '';
+    const riskCls = status === 'critical' || status === 'warning' ? 'risk' : '';
+    chips.push(`
+      <button type="button"
+              class="key-chip ${selected} ${hiddenCls} ${riskCls}"
+              data-key-id="${escapeHtml(key.id)}"
+              draggable="true"
+              role="tab"
+              aria-selected="${state.selectedKeyId === key.id}"
+              style="--key-color: ${color}; --key-glow: ${glow};">
+        <span class="key-chip-dot"></span>
+        <span class="key-chip-name">${escapeHtml(key.name || t('unknown'))}</span>
+        <span class="key-chip-pct">${pct}%</span>
+      </button>
+    `);
+  });
+
+  chips.push(`
+    <button type="button"
+            id="key-chip-add"
+            class="key-chip key-chip-add"
+            data-action="add-key">
+      <span data-i18n="addKey">${t('addKey')}</span>
+    </button>
+  `);
+
+  switcher.innerHTML = chips.join('');
 }
 
 function renderDashboard() {
