@@ -533,7 +533,9 @@ async function setupEventListeners() {
   await tauriListen('usage-updated', (event) => {
     const payload = event.payload;
     if (Array.isArray(payload) && payload.length === 2) {
-      state.usageData[payload[0]] = payload[1];
+      const [keyId, data] = payload;
+      state.usageData[keyId] = data;
+      delete state.perKeyError[keyId];
     } else if (payload && typeof payload === 'object' && !payload.keyId) {
       state.usageData['default'] = payload;
     }
@@ -544,8 +546,10 @@ async function setupEventListeners() {
   await tauriListen('usage-error', (event) => {
     console.error('Usage refresh error:', event.payload);
     if (Array.isArray(event.payload) && event.payload.length === 2) {
+      const [keyId, msg] = event.payload;
+      state.perKeyError[String(keyId)] = String(msg);
       if (!hasUsableUsageData()) {
-        state.lastError = String(event.payload[1]);
+        state.lastError = String(msg);
       }
     } else {
       if (!hasUsableUsageData()) {
@@ -700,6 +704,30 @@ function setupUiHandlers() {
     if (!keyId) return;
     state.selectedKeyId = keyId;
     try { localStorage.setItem('lastSelectedKeyId', keyId); } catch (_) { /* ignore */ }
+    scheduleRender();
+  });
+
+  // Breakdown card + key header strip action delegation
+  const dashboardEl = document.getElementById('dashboard');
+  dashboardEl?.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-action]');
+    if (!btn) return;
+    e.stopPropagation();
+    const action = btn.getAttribute('data-action');
+    const keyId = btn.getAttribute('data-key-id');
+    if (!keyId) return;
+    handleBreakdownAction(action, keyId, e);
+  });
+
+  // Click on card body (not on a button) → toggle expand (only in aggregate view)
+  document.getElementById('breakdown-list')?.addEventListener('click', (e) => {
+    if (e.target.closest('[data-action]')) return;
+    const card = e.target.closest('.breakdown-card');
+    if (!card) return;
+    const keyId = card.getAttribute('data-key-id');
+    if (!keyId) return;
+    if (state.expandedKeyIds.has(keyId)) state.expandedKeyIds.delete(keyId);
+    else state.expandedKeyIds.add(keyId);
     scheduleRender();
   });
 }
@@ -1437,6 +1465,104 @@ function renderSingleKeyView(keyId) {
   renderModelDetails(data && data.ok ? data : null);
 
   setText('last-updated', data && data.last_updated ? data.last_updated : '--');
+}
+
+// ── breakdown action handlers ──────────────────────────────────────────────
+
+function showCopyToast(message) {
+  const toast = document.getElementById('copy-toast');
+  if (!toast) return;
+  toast.textContent = message;
+  toast.classList.add('show');
+  if (toast._timer) clearTimeout(toast._timer);
+  toast._timer = setTimeout(() => toast.classList.remove('show'), 1400);
+}
+
+async function handleBreakdownAction(action, keyId, evt) {
+  if (!action || !keyId) return;
+  const key = getKeyById(keyId);
+
+  switch (action) {
+    case 'copy-mask': {
+      if (!key) return;
+      const text = key.masked_key || '';
+      try {
+        await navigator.clipboard.writeText(text);
+        showCopyToast(t('copied'));
+      } catch (e) {
+        console.warn('clipboard fail', e);
+      }
+      return;
+    }
+    case 'refresh': {
+      state.pendingRefreshKeyIds.add(keyId);
+      scheduleRender();
+      try {
+        await refreshAllUsage();
+      } finally {
+        state.pendingRefreshKeyIds.delete(keyId);
+        scheduleRender();
+      }
+      return;
+    }
+    case 'edit': {
+      runTrustedModalAction(evt, () => openKeyEditDialog(keyId));
+      return;
+    }
+    case 'toggle-hidden': {
+      if (!key) return;
+      const idx = state.apiKeys.findIndex(k => k.id === keyId);
+      if (idx < 0) return;
+      const nextActive = state.apiKeys[idx].is_active === false;
+      state.apiKeys[idx] = { ...state.apiKeys[idx], is_active: nextActive };
+      scheduleRender();
+      return;
+    }
+    case 'delete': {
+      state.deleteConfirmKeyId = keyId;
+      scheduleRender();
+      return;
+    }
+    case 'cancel-delete': {
+      state.deleteConfirmKeyId = null;
+      scheduleRender();
+      return;
+    }
+    case 'confirm-delete': {
+      state.deleteConfirmKeyId = null;
+      try {
+        await invokeWithTimeout('cmd_delete_api_key', { id: keyId }, WRITE_IPC_TIMEOUT_MS);
+        if (state.selectedKeyId === keyId) state.selectedKeyId = 'ALL';
+        await loadApiKeys();
+        delete state.usageData[keyId];
+        delete state.perKeyError[keyId];
+        scheduleRender();
+      } catch (e) {
+        console.error('delete failed', e);
+      }
+      return;
+    }
+    case 'toggle-expand': {
+      if (state.expandedKeyIds.has(keyId)) state.expandedKeyIds.delete(keyId);
+      else state.expandedKeyIds.add(keyId);
+      scheduleRender();
+      return;
+    }
+    case 'retry': {
+      delete state.perKeyError[keyId];
+      state.pendingRefreshKeyIds.add(keyId);
+      scheduleRender();
+      try {
+        await refreshAllUsage();
+      } finally {
+        state.pendingRefreshKeyIds.delete(keyId);
+        scheduleRender();
+      }
+      return;
+    }
+    default:
+      return;
+  }
 }
 
 function renderModelDetails(data) {
