@@ -1191,7 +1191,7 @@ function renderAggregateView() {
     setElementClass(document.getElementById('risk-icon'), 'risk-icon');
     document.getElementById('risk-icon').textContent = isCritical ? '🚨' : '⚠️';
     setElementClass(riskCard, `cyber-card risk-alert ${isCritical ? 'critical' : 'warning'}`);
-    setElementDisplay(riskCard, 'block');
+    setElementDisplay(riskCard, 'flex');
   } else if (riskCard) {
     setElementDisplay(riskCard, 'none');
   }
