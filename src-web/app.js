@@ -731,6 +731,22 @@ function setupUiHandlers() {
     else state.expandedKeyIds.add(keyId);
     scheduleRender();
   });
+
+  // Cmd/Ctrl + 1..9 → 切换 key
+  document.addEventListener('keydown', (e) => {
+    if (!(e.metaKey || e.ctrlKey)) return;
+    const n = Number(e.key);
+    if (!Number.isFinite(n) || n < 1 || n > 9) return;
+    const visible = state.apiKeys || [];
+    if (visible.length === 0) return;
+    const order = visible.length > 1 ? ['ALL', ...visible.map(k => k.id)] : visible.map(k => k.id);
+    const target = order[n - 1];
+    if (target == null) return;
+    e.preventDefault();
+    state.selectedKeyId = target;
+    try { localStorage.setItem('lastSelectedKeyId', target); } catch (_) { /* ignore */ }
+    scheduleRender();
+  });
 }
 
 async function refreshAllUsage() {
@@ -1965,6 +1981,16 @@ async function loadApiKeys() {
   try {
     const keys = await invokeWithTimeout('cmd_get_api_keys', undefined, BOOT_IPC_TIMEOUT_MS);
     state.apiKeys = keys || [];
+    try {
+      const last = localStorage.getItem('lastSelectedKeyId');
+      if (last && (last === 'ALL' || state.apiKeys.some(k => k.id === last))) {
+        state.selectedKeyId = last;
+      } else if (state.apiKeys.length === 1) {
+        state.selectedKeyId = state.apiKeys[0].id;
+      } else {
+        state.selectedKeyId = 'ALL';
+      }
+    } catch (_) { state.selectedKeyId = 'ALL'; }
     scheduleRender();
   } catch (e) {
     console.error('Failed to load API keys:', e);
