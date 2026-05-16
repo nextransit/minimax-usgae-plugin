@@ -117,8 +117,6 @@ let isRefreshing = false;
 let hasAlertedHighRisk = false;
 let detailsPanel: vscode.WebviewPanel | undefined;
 let cachedDetailsHtml: string | undefined;
-let cachedNonce: string | undefined;
-
 const emptyUsageViewModel = {
   primaryModelName: "",
   minRemainingModelName: "",
@@ -373,7 +371,6 @@ export function deactivate(): void {
   }
 
   cachedDetailsHtml = undefined;
-  cachedNonce = undefined;
 }
 
 function registerCommands(context: vscode.ExtensionContext): void {
@@ -983,7 +980,6 @@ function loadSameOriginWebviewHtml(webview: vscode.Webview): string {
 
   html = html.replace(/<script src="/g, `<script nonce="${nonce}" src="`);
 
-  cachedNonce = nonce;
   return html;
 }
 
@@ -1225,96 +1221,6 @@ function updateDetailsPanel(): void {
 }
 
 
-
-function clampPercent(value: number | null): number {
-  if (value === null || Number.isNaN(value)) {
-    return 0;
-  }
-
-  return Math.min(100, Math.max(0, Math.round(value)));
-}
-
-function renderModelDetailsSection(
-  vm: UsageViewModel,
-  config: ExtensionConfig,
-  i18n: {
-    labelSeparator: string;
-    modelDetails: string;
-    topItems: string;
-    itemsSuffix: string;
-    perModelHint: string;
-    perModelEmpty: string;
-    modelName: string;
-    modelUsed: string;
-    modelRemaining: string;
-    modelTotal: string;
-    modelWindow: string;
-    updatedAt: string;
-  },
-  updatedAt: string,
-): string {
-  const modelLimit = Math.min(config.detailModelLimit, vm.models.length);
-
-  const rows =
-    modelLimit > 0
-      ? vm.models
-          .slice(0, modelLimit)
-          .map(
-            (model) => `
-              <tr>
-                <td class="model-cell" title="${escapeHtml(model.name)}">${escapeHtml(model.name)}</td>
-                <td class="metric-cell used">${formatNumber(model.usedCount)}</td>
-                <td class="metric-cell remaining">${formatNumber(model.remainingCount)}</td>
-                <td class="metric-cell total">${formatNumber(model.totalCount)}</td>
-                <td class="window-cell">${escapeHtml(model.timeWindow || "00:00 ~ 00:00")}</td>
-              </tr>`,
-          )
-          .join("")
-      : "";
-
-  const body =
-    modelLimit > 0
-      ? `
-        <div class="model-details-scroll">
-          <table class="model-details-table">
-            <thead>
-              <tr>
-                <th>${i18n.modelName}</th>
-                <th>${i18n.modelUsed}</th>
-                <th>${i18n.modelRemaining}</th>
-                <th>${i18n.modelTotal}</th>
-                <th>${i18n.modelWindow}</th>
-              </tr>
-            </thead>
-            <tbody>${rows}</tbody>
-          </table>
-        </div>`
-      : `<div class="model-details-empty">${i18n.perModelEmpty}</div>`;
-
-  return `
-    <section class="cyber-card model-details-card">
-      <div class="card-glow"></div>
-      <details class="model-details" data-persist-key="modelDetailsOpen">
-        <summary class="model-details-summary">
-          <div class="model-details-summary-left">
-            <span class="model-details-icon">🧩</span>
-            <div>
-              <div class="model-details-title">${i18n.modelDetails}</div>
-            </div>
-          </div>
-          <div class="model-details-summary-right">
-            <span class="model-details-badge">${i18n.topItems} ${modelLimit} ${i18n.itemsSuffix}</span>
-            <span class="model-details-hint">${i18n.perModelHint}</span>
-            <span class="model-details-chevron" aria-hidden="true"></span>
-          </div>
-        </summary>
-        <div class="model-details-body">
-          ${body}
-          <div class="model-details-updated">${i18n.updatedAt}${i18n.labelSeparator}${escapeHtml(updatedAt)}</div>
-        </div>
-      </details>
-    </section>`;
-}
 
 function buildDetailsTooltip(vm: UsageViewModel, config: ExtensionConfig): vscode.MarkdownString {
   const strings = getRuntimeStrings(config);
@@ -1724,14 +1630,6 @@ function requestJson(options: {
   });
 }
 
-function formatNumber(value: number | null | undefined): string {
-  if (typeof value !== "number") {
-    return "-";
-  }
-
-  return new Intl.NumberFormat(getRuntimeStrings().localeTag).format(value);
-}
-
 function formatTime(timestamp: number): string {
   const parts = getDateTimeParts(timestamp);
   return `${parts.hour}:${parts.minute}`;
@@ -1763,14 +1661,6 @@ function escapeMarkdown(value: string): string {
   return value.replace(/[\\`*_{}[\]()#+\-.!|]/g, "\\$&");
 }
 
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
 
 function isMiniMaxRawPayload(value: unknown): value is MiniMaxRawPayload {
   return typeof value === "object" && value !== null;
