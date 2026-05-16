@@ -3,7 +3,7 @@
   "displayName": "%extension.displayName%",
   "description": "%extension.description%",
   "icon": "images/icon.png",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "publisher": "decard",
   "license": "MIT",
   "repository": {
@@ -135,7 +135,18 @@
         "minimaxUsage.apiKeys": {
           "type": "array",
           "default": [],
-          "description": "List of configured API keys"
+          "description": "List of configured API keys",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "name": { "type": "string" },
+              "color": { "type": "string" },
+              "refreshInterval": { "type": "number" },
+              "createdAt": { "type": "number" },
+              "isActive": { "type": "boolean" }
+            }
+          }
         },
         "minimaxUsage.selectedKeyId": {
           "type": "string",

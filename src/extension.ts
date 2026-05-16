@@ -1332,15 +1332,23 @@ async function loadMultiKeyState(): Promise<void> {
 
 // Save API keys to config
 async function saveApiKeys(keys: ApiKeyEntry[]): Promise<void> {
-  const config = vscode.workspace.getConfiguration("minimaxUsage");
-  await config.update("apiKeys", keys, vscode.ConfigurationTarget.Global);
+  try {
+    const config = vscode.workspace.getConfiguration("minimaxUsage");
+    await config.update("apiKeys", keys, vscode.ConfigurationTarget.Global);
+  } catch (e) {
+    log(`saveApiKeys config failed: ${e}`);
+  }
   multiKeyState.setApiKeys(keys);
 }
 
 // Save selected key ID to config
 async function setSelectedKey(keyId: string): Promise<void> {
-  const config = vscode.workspace.getConfiguration("minimaxUsage");
-  await config.update("selectedKeyId", keyId, vscode.ConfigurationTarget.Global);
+  try {
+    const config = vscode.workspace.getConfiguration("minimaxUsage");
+    await config.update("selectedKeyId", keyId, vscode.ConfigurationTarget.Global);
+  } catch (e) {
+    log(`setSelectedKey config failed: ${e}`);
+  }
   multiKeyState.selectedKeyId = keyId;
   // Update latestVm to reflect the new selection
   if (keyId === "ALL") {
