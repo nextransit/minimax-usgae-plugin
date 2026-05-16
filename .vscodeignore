@@ -8,7 +8,6 @@ scripts/**
 tests/**
 src/**
 src-tauri/**
-src-web/**
 tsconfig.json
 .gitignore
 package-lock.json
