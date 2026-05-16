@@ -12,6 +12,7 @@ import {
 } from "./compactView";
 import { multiKeyState, ApiKeyEntry } from "./multiKeyState";
 import { SecretStore } from "./secretStore";
+import * as fs from "fs";
 
 const REMAINS_ENDPOINT = "https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains";
 
@@ -948,6 +949,210 @@ function buildMissingKeyTooltip(): vscode.MarkdownString {
   return md;
 }
 
+function loadSameOriginWebviewHtml(webview: vscode.Webview): string {
+  const extPath = contextRef!.extensionUri;
+  const indexPath = vscode.Uri.joinPath(extPath, "src-web", "index.html");
+  let html = fs.readFileSync(indexPath.fsPath, "utf-8");
+
+  const resourceMap: Array<[string, string]> = [
+    ["styles.css", "src-web/styles.css"],
+    ["tauri-bridge.js", "src-web/tauri-bridge.js"],
+    ["app.js", "src-web/app.js"],
+  ];
+
+  for (const [filename, relPath] of resourceMap) {
+    const uri = webview.asWebviewUri(vscode.Uri.joinPath(extPath, relPath));
+    html = html.replace(
+      new RegExp(`(href|src)="${filename.replace(/\./g, "\\.")}"`, "g"),
+      `$1="${uri.toString()}"`,
+    );
+  }
+
+  const nonce = getNonce();
+  html = html.replace(/<meta http-equiv="Content-Security-Policy"[^>]*>/g, "");
+  const csp = [
+    `<meta http-equiv="Content-Security-Policy"`,
+    `content="default-src 'none';`,
+    `style-src ${webview.cspSource} 'unsafe-inline';`,
+    `script-src 'nonce-${nonce}';`,
+    `font-src ${webview.cspSource};`,
+    `img-src ${webview.cspSource} data:;`,
+    `connect-src ${webview.cspSource};">`,
+  ].join(" ");
+  html = html.replace("<head>", `<head>\n  ${csp}`);
+
+  html = html.replace(/<script src="/g, `<script nonce="${nonce}" src="`);
+
+  cachedNonce = nonce;
+  return html;
+}
+
+function convertUsageToAppJsFormat(u: UsageViewModel): Record<string, unknown> {
+  return {
+    ok: u.ok,
+    status_label: u.statusLabel,
+    primary_model_name: u.primaryModelName,
+    time_window: u.timeWindow,
+    reset_timestamp: u.resetTimestamp,
+    reset_in_label: u.resetInLabel,
+    total_count: u.totalCount,
+    remaining_count: u.remainingCount,
+    used_count: u.usedCount,
+    used_percent: u.usedPercent,
+    weekly_total_count: u.weeklyTotalCount,
+    weekly_used_count: u.weeklyUsedCount,
+    weekly_remaining_count: u.weeklyRemainingCount,
+    weekly_used_percent: u.weeklyUsedPercent,
+    weekly_reset_timestamp: u.weeklyResetTimestamp,
+    weekly_reset_in_label: u.weeklyResetInLabel,
+    interval_label: u.intervalLabel,
+    models: (u.models || []).map((m) => ({
+      name: m.name,
+      time_window: m.timeWindow,
+      total_count: m.totalCount,
+      remaining_count: m.remainingCount,
+      used_count: m.usedCount,
+    })),
+    last_updated: lastUpdatedAt?.toLocaleString() || "",
+  };
+}
+
+async function handleInvokeCommand(
+  cmd: string,
+  args?: Record<string, unknown>,
+): Promise<unknown> {
+  const keys = multiKeyState.visibleKeys;
+
+  switch (cmd) {
+    case "cmd_get_config": {
+      const config = readConfig();
+      return {
+        config_version: 2,
+        refresh_interval_seconds: config.refreshIntervalSeconds,
+        show_weekly_in_status: config.showWeeklyInStatusBar,
+        detail_model_limit: config.detailModelLimit,
+        language: config.language,
+        first_run: false,
+        start_minimized: false,
+        enable_notifications: true,
+        api_keys: keys.map((k) => ({
+          id: k.id, name: k.name, color: k.color,
+          refresh_interval: k.refreshInterval,
+          created_at: k.createdAt, is_active: k.isActive,
+          masked_key: "****" + k.id.slice(-4),
+        })),
+      };
+    }
+
+    case "cmd_get_api_keys": {
+      return keys.map((k) => ({
+        id: k.id, name: k.name, color: k.color,
+        refresh_interval: k.refreshInterval,
+        created_at: k.createdAt, is_active: k.isActive,
+        masked_key: "****" + k.id.slice(-4),
+      }));
+    }
+
+    case "cmd_get_all_usage_data": {
+      const result: Record<string, unknown> = {};
+      for (const key of keys) {
+        const u = multiKeyState.getUsageForKey(key.id);
+        if (u) result[key.id] = convertUsageToAppJsFormat(u);
+      }
+      return result;
+    }
+
+    case "cmd_refresh_all_usage_data": {
+      await refreshAllUsageData();
+      const result: Record<string, unknown> = {};
+      for (const key of multiKeyState.visibleKeys) {
+        const u = multiKeyState.getUsageForKey(key.id);
+        if (u) {
+          result[key.id] = convertUsageToAppJsFormat(u);
+          detailsPanel?.webview.postMessage({
+            type: "event", name: "usage-updated",
+            payload: [key.id, convertUsageToAppJsFormat(u)],
+          });
+        }
+      }
+      return result;
+    }
+
+    case "cmd_save_config": {
+      const config = args?.config as Record<string, unknown> | undefined;
+      if (config) {
+        const vs = vscode.workspace.getConfiguration("minimaxUsage");
+        if (typeof config.refresh_interval_seconds === "number")
+          await vs.update("refreshIntervalSeconds", config.refresh_interval_seconds, true);
+        if (typeof config.language === "string")
+          await vs.update("language", config.language, true);
+        if (typeof config.detail_model_limit === "number")
+          await vs.update("detailModelLimit", config.detail_model_limit, true);
+      }
+      return { ok: true };
+    }
+
+    case "cmd_add_api_key": {
+      const { name, apiKey } = (args || {}) as {
+        name: string; apiKey: string;
+      };
+      if (!apiKey) throw new Error("API key is required");
+      const v = validateApiKey(apiKey);
+      if (!v.ok) throw new Error(v.message);
+      const k = await addApiKey(name, apiKey);
+      if (!k) throw new Error("Failed to add key");
+      await refreshUsageForKey(k.id, "manual");
+      return { ok: true };
+    }
+
+    case "cmd_update_api_key": {
+      const { id, name, color, refreshInterval, apiKey } = (args || {}) as {
+        id: string; name: string; color: string; refreshInterval: number; apiKey?: string;
+      };
+      const existing = multiKeyState.getKeyById(id);
+      if (!existing) throw new Error("Key not found");
+      const up: Record<string, unknown> = { ...existing };
+      if (name) up.name = name;
+      if (color) up.color = color;
+      if (refreshInterval) up.refreshInterval = refreshInterval;
+      multiKeyState.addOrUpdateKey(up as unknown as ApiKeyEntry);
+      if (apiKey?.trim() && secretStore) {
+        const v = validateApiKey(apiKey.trim());
+        if (!v.ok) throw new Error(v.message);
+        await secretStore.saveKey(id, apiKey.trim());
+      }
+      await saveApiKeys(multiKeyState.visibleKeys);
+      return { ok: true };
+    }
+
+    case "cmd_delete_api_key": {
+      const id = (args as { id: string })?.id;
+      if (secretStore) await secretStore.deleteKey(id);
+      multiKeyState.deleteKey(id);
+      await saveApiKeys(multiKeyState.visibleKeys);
+      return { ok: true };
+    }
+
+    case "cmd_reorder_api_keys": {
+      const ids = (args as { ids: string[] })?.ids;
+      if (ids) {
+        multiKeyState.reorderKeys(ids);
+        await saveApiKeys(multiKeyState.visibleKeys);
+      }
+      return { ok: true };
+    }
+
+    case "cmd_get_autostart":
+      return false;
+
+    case "cmd_set_autostart":
+      return { ok: true };
+
+    default:
+      throw new Error(`Unknown command: ${cmd}`);
+  }
+}
+
 function showDetailsPanel(): void {
   if (detailsPanel) {
     detailsPanel.reveal(vscode.ViewColumn.Active);
@@ -961,8 +1166,10 @@ function showDetailsPanel(): void {
     vscode.ViewColumn.Active,
     {
       enableScripts: true,
-      enableCommandUris: true,
       retainContextWhenHidden: true,
+      localResourceRoots: [
+        vscode.Uri.joinPath(contextRef!.extensionUri, "src-web"),
+      ],
     },
   );
 
@@ -972,13 +1179,18 @@ function showDetailsPanel(): void {
 
   detailsPanel.webview.onDidReceiveMessage(
     async (message) => {
-      switch (message.command) {
-        case "setLanguage":
-          await setLanguage(message.language);
-          break;
-        case "toggleLanguage":
-          await toggleLanguage();
-          break;
+      if (message.type === "invoke") {
+        const { id, cmd, args } = message;
+        try {
+          const result = await handleInvokeCommand(cmd, args);
+          detailsPanel?.webview.postMessage({
+            type: "invoke_result", id, ok: true, data: result,
+          });
+        } catch (error) {
+          detailsPanel?.webview.postMessage({
+            type: "invoke_result", id, ok: false, error: String(error),
+          });
+        }
       }
     },
     undefined,
@@ -995,6 +1207,7 @@ async function setLanguage(language: string): Promise<void> {
   }
 }
 
+// @ts-expect-error TS6133 - used by command-enabled HTML, cleanup pending
 async function toggleLanguage(): Promise<void> {
   const config = readConfig();
   const newLang = config.language === "en" ? "zh-CN" : "en";
@@ -1002,11 +1215,8 @@ async function toggleLanguage(): Promise<void> {
 }
 
 function updateDetailsPanel(): void {
-  if (!detailsPanel) {
-    return;
-  }
-
-  const newHtml = renderDetailsPanelHtml();
+  if (!detailsPanel) return;
+  const newHtml = loadSameOriginWebviewHtml(detailsPanel.webview);
   if (cachedDetailsHtml !== newHtml) {
     cachedDetailsHtml = newHtml;
     detailsPanel.title = getRuntimeStrings().detailsPanelTitle;
@@ -1014,6 +1224,7 @@ function updateDetailsPanel(): void {
   }
 }
 
+// @ts-expect-error TS6133 - legacy, cleanup pending
 function renderDetailsPanelHtml(): string {
   const config = readConfig();
   const strings = getRuntimeStrings(config);
