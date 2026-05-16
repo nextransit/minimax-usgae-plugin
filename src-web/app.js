@@ -1200,6 +1200,7 @@ function renderDashboard() {
 }
 
 function renderAggregateView() {
+  setElementDisplay(document.getElementById('model-details-card'), 'none');
   document.documentElement.style.removeProperty('--key-color');
   document.documentElement.style.removeProperty('--key-glow');
   const m = getAggregateMetrics();
@@ -1428,6 +1429,7 @@ function renderKeyDetailCard(key) {
 }
 
 function renderSingleKeyView(keyId) {
+  setElementDisplay(document.getElementById('model-details-card'), 'block');
   const key = getKeyById(keyId);
   if (!key) {
     state.selectedKeyId = 'ALL';

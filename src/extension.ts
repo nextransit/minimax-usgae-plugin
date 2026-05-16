@@ -116,7 +116,6 @@ let lastUpdatedAt: Date | null = null;
 let isRefreshing = false;
 let hasAlertedHighRisk = false;
 let detailsPanel: vscode.WebviewPanel | undefined;
-let cachedDetailsHtml: string | undefined;
 const emptyUsageViewModel = {
   primaryModelName: "",
   minRemainingModelName: "",
@@ -339,7 +338,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
       restartRefreshTimer();
       updateStatusBar();
-      updateDetailsPanel();
+      pushUsageDataToWebview();
     }),
   );
 
@@ -370,7 +369,6 @@ export function deactivate(): void {
     detailsPanel = undefined;
   }
 
-  cachedDetailsHtml = undefined;
 }
 
 function registerCommands(context: vscode.ExtensionContext): void {
@@ -401,7 +399,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
       lastUpdatedAt = null;
       log("All API keys cleared");
       updateStatusBar();
-      updateDetailsPanel();
+      pushUsageDataToWebview();
       vscode.window.showInformationMessage(strings.infoApiKeyCleared);
     }),
 
@@ -755,7 +753,7 @@ async function refreshUsageForKey(keyId: string, reason: "startup" | "auto" | "m
   } finally {
     isRefreshing = false;
     updateStatusBar();
-    updateDetailsPanel();
+    pushUsageDataToWebview();
     if (reason === "manual") {
       for (const entry of statusItems) { entry.item.hide(); }
       setTimeout(() => { for (const entry of statusItems) { entry.item.show(); } }, 50);
@@ -786,7 +784,7 @@ async function refreshAllUsageData(): Promise<void> {
   latestRawResponse = null;
   lastUpdatedAt = new Date();
   updateStatusBar();
-  updateDetailsPanel();
+  pushUsageDataToWebview();
 }
 
 // Legacy single-key refresh (redirects to currently selected key)
@@ -827,7 +825,7 @@ function updateStatusBar(): void {
       : `${selectCompactStateIcon("refreshing")} ${strings.statusQueryingCompact}`;
     addStatusItem(specs, alignment, basePriority, label, buildRefreshingTooltip(), "minimaxUsage.showDetails");
     renderStatusItems(specs);
-    updateDetailsPanel();
+    pushUsageDataToWebview();
     return;
   }
 
@@ -842,7 +840,7 @@ function updateStatusBar(): void {
       new vscode.ThemeColor("statusBarItem.warningForeground"),
     );
     renderStatusItems(specs);
-    updateDetailsPanel();
+    pushUsageDataToWebview();
     return;
   }
 
@@ -858,7 +856,7 @@ function updateStatusBar(): void {
       new vscode.ThemeColor("statusBarItem.prominentForeground"),
     );
     renderStatusItems(specs);
-    updateDetailsPanel();
+    pushUsageDataToWebview();
     return;
   }
 
@@ -875,7 +873,7 @@ function updateStatusBar(): void {
       new vscode.ThemeColor("statusBarItem.warningBackground"),
     );
     renderStatusItems(specs);
-    updateDetailsPanel();
+    pushUsageDataToWebview();
     return;
   }
 
@@ -916,7 +914,7 @@ function updateStatusBar(): void {
   );
 
   renderStatusItems(specs);
-  updateDetailsPanel();
+  pushUsageDataToWebview();
 }
 
 function buildRefreshingTooltip(): vscode.MarkdownString {
@@ -1152,7 +1150,6 @@ async function handleInvokeCommand(
 function showDetailsPanel(): void {
   if (detailsPanel) {
     detailsPanel.reveal(vscode.ViewColumn.Active);
-    updateDetailsPanel();
     return;
   }
 
@@ -1193,7 +1190,22 @@ function showDetailsPanel(): void {
     contextRef?.subscriptions,
   );
 
-  updateDetailsPanel();
+  // 设置 HTML 一次；后续数据通过 postMessage 推送
+  detailsPanel.webview.html = loadSameOriginWebviewHtml(detailsPanel.webview);
+}
+
+function pushUsageDataToWebview(): void {
+  if (!detailsPanel) return;
+  for (const key of multiKeyState.visibleKeys) {
+    const u = multiKeyState.getUsageForKey(key.id);
+    if (u) {
+      detailsPanel.webview.postMessage({
+        type: "event",
+        name: "usage-updated",
+        payload: [key.id, convertUsageToAppJsFormat(u)],
+      });
+    }
+  }
 }
 
 async function setLanguage(language: string): Promise<void> {
@@ -1208,16 +1220,6 @@ async function toggleLanguage(): Promise<void> {
   const config = readConfig();
   const newLang = config.language === "en" ? "zh-CN" : "en";
   await setLanguage(newLang);
-}
-
-function updateDetailsPanel(): void {
-  if (!detailsPanel) return;
-  const newHtml = loadSameOriginWebviewHtml(detailsPanel.webview);
-  if (cachedDetailsHtml !== newHtml) {
-    cachedDetailsHtml = newHtml;
-    detailsPanel.title = getRuntimeStrings().detailsPanelTitle;
-    detailsPanel.webview.html = newHtml;
-  }
 }
 
 
@@ -1321,7 +1323,7 @@ async function setSelectedKey(keyId: string): Promise<void> {
     latestVm = multiKeyState.getUsageForKey(keyId) || null;
   }
   updateStatusBar();
-  updateDetailsPanel();
+  pushUsageDataToWebview();
 }
 
 // Add a new API key

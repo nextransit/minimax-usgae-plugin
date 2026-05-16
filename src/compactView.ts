@@ -129,13 +129,13 @@ export function formatEnglishCountdownFriendly(
 }
 
 export function buildCompactStatusText(input: CompactStatusTextInput): string {
-  const currentSegment = `${input.icon} ${input.currentPercent}%${formatStatusResetLabel(input.currentResetLabel)}`;
+  const currentSegment = `${input.icon} ${Math.round(input.currentPercent)}%${formatStatusResetLabel(input.currentResetLabel)}`;
 
   if (input.weeklyPercent === null || input.weeklyPercent === undefined) {
     return currentSegment;
   }
 
-  return `${currentSegment} · W ${input.weeklyPercent}%${formatStatusResetLabel(input.weeklyResetLabel)}`;
+  return `${currentSegment} · W ${Math.round(input.weeklyPercent)}%${formatStatusResetLabel(input.weeklyResetLabel)}`;
 }
 
 export function buildCompactTooltipLines(input: CompactTooltipLinesInput): string[] {
