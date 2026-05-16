@@ -8,7 +8,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://192.168.19.70/ai/minimax-usgae-plugin.git"
+    "url": "https://github.com/nextransit/minimax-usgae-plugin.git"
   },
   "type": "commonjs",
   "engines": {
@@ -23,7 +23,13 @@
     "onCommand:minimaxUsage.refresh",
     "onCommand:minimaxUsage.setApiKey",
     "onCommand:minimaxUsage.clearApiKey",
-    "onCommand:minimaxUsage.copyRawResponse"
+    "onCommand:minimaxUsage.copyRawResponse",
+    "onCommand:minimaxUsage.addApiKey",
+    "onCommand:minimaxUsage.updateApiKey",
+    "onCommand:minimaxUsage.deleteApiKey",
+    "onCommand:minimaxUsage.reorderApiKeys",
+    "onCommand:minimaxUsage.showKeySwitcher",
+    "onCommand:minimaxUsage.refreshAll"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -47,6 +53,30 @@
       {
         "command": "minimaxUsage.copyRawResponse",
         "title": "%command.copyRawResponse.title%"
+      },
+      {
+        "command": "minimaxUsage.addApiKey",
+        "title": "Add API Key"
+      },
+      {
+        "command": "minimaxUsage.updateApiKey",
+        "title": "Update API Key"
+      },
+      {
+        "command": "minimaxUsage.deleteApiKey",
+        "title": "Delete API Key"
+      },
+      {
+        "command": "minimaxUsage.reorderApiKeys",
+        "title": "Reorder API Keys"
+      },
+      {
+        "command": "minimaxUsage.showKeySwitcher",
+        "title": "Switch API Key"
+      },
+      {
+        "command": "minimaxUsage.refreshAll",
+        "title": "Refresh All Keys"
       }
     ],
     "configuration": {
@@ -101,6 +131,16 @@
             "%configuration.language.zhCN%",
             "%configuration.language.en%"
           ]
+        },
+        "minimaxUsage.apiKeys": {
+          "type": "array",
+          "default": [],
+          "description": "List of configured API keys"
+        },
+        "minimaxUsage.selectedKeyId": {
+          "type": "string",
+          "default": "ALL",
+          "description": "Currently selected API key ID"
         }
       }
     }
@@ -110,18 +150,20 @@
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile",
     "test": "echo \"No tests configured\"",
-    "package": "vsce package --baseContentUrl https://192.168.19.70/ai/minimax-usgae-plugin/-/raw/master --baseImagesUrl https://192.168.19.70/ai/minimax-usgae-plugin/-/raw/master",
+    "package": "vsce package",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
     "tauri:build:ci": "tauri build --ci --no-sign",
     "tauri:info": "tauri info",
-    "tauri:build:linux:remote": "bash scripts/remote-linux-build.sh"
+    "tauri:build:linux:remote": "bash scripts/remote-linux-build.sh",
+    "publish": "vsce publish"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.10.1",
     "@types/node": "^25.6.0",
     "@types/vscode": "^1.107.0",
+    "@vscode/vsce": "^2.32.0",
     "typescript": "^6.0.2"
   }
 }

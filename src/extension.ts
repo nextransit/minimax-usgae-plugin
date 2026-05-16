@@ -10,6 +10,7 @@ import {
   selectCompactStateIcon,
   selectCompactStatusIcon,
 } from "./compactView";
+import { multiKeyState } from "./multiKeyState";
 
 const SECRET_API_KEY = "minimaxUsage.apiKey";
 const REMAINS_ENDPOINT = "https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains";
@@ -421,6 +422,14 @@ function registerCommands(context: vscode.ExtensionContext): void {
 
       await vscode.env.clipboard.writeText(JSON.stringify(latestRawResponse, null, 2));
       vscode.window.showInformationMessage(strings.infoRawCopied);
+    }),
+
+    // Switch to specific key from panel chip
+    vscode.commands.registerCommand("minimaxUsage.switchToKey", async (keyId: string) => {
+      if (!keyId || typeof keyId !== "string") { return; }
+      multiKeyState.selectedKeyId = keyId;
+      updateStatusBar();
+      updateDetailsPanel();
     }),
   );
 }
@@ -940,6 +949,38 @@ function renderDetailsPanelHtml(): string {
   const updatedAt = lastUpdatedAt ? formatDateTime(lastUpdatedAt.getTime()) : i18n.na;
   const modelDetailHtml = renderModelDetailsSection(latestVm, config, i18n, updatedAt);
 
+  // Build key switcher chips
+  const allKeys = multiKeyState.visibleKeys;
+  const selectedKeyId = multiKeyState.selectedKeyId;
+  const showKeySwitcher = allKeys.length >= 1;
+
+  let keySwitcherHtml = '';
+  if (showKeySwitcher) {
+    const chips: string[] = [];
+    const agg = multiKeyState.getAggregateMetrics();
+    const aggPercent = agg.hasData ? Math.round(agg.percent) : 0;
+    const isAllActive = selectedKeyId === 'ALL';
+    chips.push(`<a class="key-chip ${isAllActive ? 'active' : ''}" href="command:minimaxUsage.switchToKey('ALL')">
+      <span class="chip-icon">🌐</span>
+      <span class="chip-label">ALL</span>
+      <span class="chip-percent">${aggPercent}%</span>
+    </a>`);
+    for (const key of allKeys) {
+      const data = multiKeyState.getUsageForKey(key.id);
+      const percent = data?.usedPercent != null ? Math.round(data.usedPercent) : 0;
+      const isActive = selectedKeyId === key.id;
+      const shortName = key.name.length > 10 ? key.name.slice(0, 8) + '…' : key.name;
+      chips.push(`<a class="key-chip ${isActive ? 'active' : ''} ${!key.isActive ? 'inactive' : ''}" href="command:minimaxUsage.switchToKey('${key.id}')">
+        <span class="chip-icon" style="color:${key.color}">●</span>
+        <span class="chip-label">${escapeHtml(shortName)}</span>
+        <span class="chip-percent">${percent}%</span>
+      </a>`);
+    }
+    keySwitcherHtml = `<nav class="key-switcher" role="navigation" aria-label="API Key Switcher">
+      ${chips.join('')}
+    </nav>`;
+  }
+
   return renderDetailsHtmlSkeleton(`
     <div class="dashboard">
       <header class="main-header">
@@ -965,6 +1006,7 @@ function renderDetailsPanelHtml(): string {
               </button>
             </div>
   </div>
+    ${keySwitcherHtml}
   </header>
 
       <div class="stats-container">
@@ -1218,6 +1260,66 @@ function renderDetailsHtmlSkeleton(innerHtml: string): string {
       color: var(--text-bright);
       font-weight: 600;
     }
+
+    /* Key Switcher Chips */
+    .key-switcher {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid var(--border);
+    }
+
+    .key-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--panel-bg);
+      color: var(--text);
+      text-decoration: none;
+      font-size: 12px;
+      font-weight: 600;
+      transition: all 0.2s ease;
+      cursor: pointer;
+    }
+
+    .key-chip:hover {
+      border-color: var(--primary);
+      color: var(--primary);
+      box-shadow: 0 0 8px rgba(0, 212, 255, 0.3);
+    }
+
+    .key-chip.active {
+      border-color: var(--primary);
+      background: rgba(0, 212, 255, 0.15);
+      color: var(--primary);
+      box-shadow: 0 0 12px rgba(0, 212, 255, 0.4);
+    }
+
+    .key-chip.inactive {
+      opacity: 0.5;
+    }
+
+    .chip-icon {
+      font-size: 10px;
+    }
+
+    .chip-label {
+      max-width: 80px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .chip-percent {
+      font-size: 11px;
+      opacity: 0.8;
+    }
+
 
     /* Card Styles */
     .stats-container {
