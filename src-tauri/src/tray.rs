@@ -347,7 +347,7 @@ fn resolve_tray_icon(_app: &tauri::App, _state: &AppState) -> Option<Image<'stat
 }
 
 #[cfg(not(target_os = "macos"))]
-fn resolve_tray_icon(app: &tauri::App, state: &AppState) -> Option<Image<'static>> {
+fn resolve_tray_icon(_app: &tauri::App, state: &AppState) -> Option<Image<'static>> {
     let (style, used_percent, ok) = {
         let cfg = state.config.lock().unwrap();
         let usage = state.usage_data.lock().unwrap();
