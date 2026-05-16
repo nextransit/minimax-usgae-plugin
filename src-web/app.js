@@ -1360,7 +1360,7 @@ function renderKeyDetailCard(key) {
       <div class="metric-bar"><div class="metric-bar-fill" style="${fillStyle}"></div></div>
       <span class="metric-pct">${data && data.ok ? Math.round(pct) + '%' : '—'}</span>
       <span class="metric-numbers">${data && data.ok ? `${formatNumber(used)} / ${formatNumber(total)}` : '—'}</span>
-      <span class="metric-reset" data-timestamp="${reset || 0}" data-reset-kind="${kindSuffix}">&nbsp;</span>
+      <span class="metric-reset" data-timestamp="${reset || 0}" data-reset-kind="${kindSuffix}">${reset > 0 ? formatCountdown(reset) : '&nbsp;'}</span>
     </div>
   `;
   };

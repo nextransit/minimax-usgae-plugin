@@ -867,7 +867,7 @@ function updateStatusBar(): void {
       alignment,
       basePriority,
       `${selectCompactStateIcon("error")} ${keyLabel} ${truncate(displayVm.statusLabel, 30)}`,
-      buildDetailsTooltip(displayVm, config),
+      buildMultiKeyTooltip(config),
       "minimaxUsage.showDetails",
       new vscode.ThemeColor("statusBarItem.warningForeground"),
       new vscode.ThemeColor("statusBarItem.warningBackground"),
@@ -908,7 +908,7 @@ function updateStatusBar(): void {
     alignment,
     basePriority,
     `${isRefreshing ? "$(sync~spin) " : ""}${keyCountTag} ${compactStatusText}`,
-    buildDetailsTooltip(displayVm, config),
+    buildMultiKeyTooltip(config),
     "minimaxUsage.showDetails",
     percentColor,
   );
@@ -1224,7 +1224,7 @@ async function toggleLanguage(): Promise<void> {
 
 
 
-function buildDetailsTooltip(vm: UsageViewModel, config: ExtensionConfig): vscode.MarkdownString {
+function buildMultiKeyTooltip(config: ExtensionConfig): vscode.MarkdownString {
   const strings = getRuntimeStrings(config);
   const md = new vscode.MarkdownString();
   md.isTrusted = true;
@@ -1233,33 +1233,60 @@ function buildDetailsTooltip(vm: UsageViewModel, config: ExtensionConfig): vscod
 
   md.appendMarkdown(`**${strings.tooltipTitle}**\n\n`);
 
-  if (!vm.ok || vm.usedCount === null || vm.totalCount === null || vm.usedPercent === null) {
-    md.appendMarkdown(`${escapeMarkdown(vm.statusLabel)}\n\n`);
+  const keys = multiKeyState.visibleKeys;
+  const activeKeys = keys.filter(k => k.isActive);
+
+  if (activeKeys.length === 0) {
+    md.appendMarkdown(strings.tooltipMissingKey);
     md.appendMarkdown(
-      `[$(refresh) ${strings.actionRefresh}](command:minimaxUsage.refresh) · [$(key) ${strings.actionSetKey}](command:minimaxUsage.addApiKey)`,
+      `[$(key) ${strings.actionSetApiKey}](command:minimaxUsage.addApiKey)`,
     );
     return md;
   }
 
   const tooltipLabels = getCompactTooltipLabels(strings.language);
-  const compactTable = buildCompactTooltipTable({
-    currentLabel: tooltipLabels.current,
-    currentUsed: vm.usedCount,
-    currentTotal: vm.totalCount,
-    currentPercent: vm.usedPercent,
-    weeklyLabel:
-      vm.weeklyUsedCount !== null && vm.weeklyTotalCount !== null && vm.weeklyUsedPercent !== null
-        ? tooltipLabels.weekly
-        : undefined,
-    weeklyUsed: vm.weeklyUsedCount,
-    weeklyTotal: vm.weeklyTotalCount,
-    weeklyPercent: vm.weeklyUsedPercent,
-  });
+  const selectedId = multiKeyState.selectedKeyId;
 
-  md.appendMarkdown(compactTable);
+  for (let i = 0; i < activeKeys.length; i++) {
+    const key = activeKeys[i];
+    const u = multiKeyState.getUsageForKey(key.id);
+
+    // Separator between keys (not before first)
+    if (i > 0) {
+      md.appendMarkdown("\n---\n\n");
+    }
+
+    // Key name with selection indicator
+    const isSelected = selectedId === key.id || selectedId === "ALL";
+    const namePrefix = isSelected ? "● " : "○ ";
+    md.appendMarkdown(`**${namePrefix}${escapeMarkdown(key.name)}**\n\n`);
+
+    if (!u || !u.ok || u.usedCount === null) {
+      md.appendMarkdown(`*${escapeMarkdown(u?.statusLabel || strings.unknown)}*\n\n`);
+      continue;
+    }
+
+    const currentPercent = Math.round(u.usedPercent ?? 0);
+    const weeklyPercent = u.weeklyUsedPercent !== null ? Math.round(u.weeklyUsedPercent) : null;
+
+    const compactTable = buildCompactTooltipTable({
+      currentLabel: tooltipLabels.current,
+      currentUsed: u.usedCount,
+      currentTotal: u.totalCount ?? 0,
+      currentPercent,
+      weeklyLabel: weeklyPercent !== null ? tooltipLabels.weekly : undefined,
+      weeklyUsed: u.weeklyUsedCount,
+      weeklyTotal: u.weeklyTotalCount,
+      weeklyPercent,
+      barLength: 20,
+    });
+
+    md.appendMarkdown(compactTable);
+  }
+
   md.appendMarkdown("\n\n");
   md.appendMarkdown(
-    `[$(refresh) ${strings.actionRefresh}](command:minimaxUsage.refresh) · [$(key) ${strings.actionSetKey}](command:minimaxUsage.addApiKey)`,
+    `[$(refresh) ${strings.actionRefresh}](command:minimaxUsage.refreshAll) · [$(key) ${strings.actionSetApiKey}](command:minimaxUsage.addApiKey)`,
   );
 
   return md;
