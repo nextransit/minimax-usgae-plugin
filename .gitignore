@@ -13,6 +13,7 @@ CLAUDE.md
 ISSUES.md
 docs/plans/
 .worktree/
+.worktrees/
 .env.github
 src-tauri/target/
 docs/superpowers/
