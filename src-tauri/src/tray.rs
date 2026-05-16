@@ -352,10 +352,11 @@ fn resolve_tray_icon(app: &tauri::App, state: &AppState) -> Option<Image<'static
         let cfg = state.config.lock().unwrap();
         let usage = state.usage_data.lock().unwrap();
         let style = cfg.tray_icon_style.clone();
-        let (used_percent, ok) = usage
-            .as_ref()
-            .map(|d| (d.used_percent, d.ok))
-            .unwrap_or((None, false));
+        let (used_percent, ok) = if let Some(d) = usage.values().next() {
+            (d.used_percent, d.ok)
+        } else {
+            (None, false)
+        };
         (style, used_percent, ok)
     };
     Some(tray_icon::render_tray_icon(&style, used_percent, ok))
@@ -411,23 +412,10 @@ pub fn update_tray_menu(app: &AppHandle, state: &AppState) {
 
     let separator = PredefinedMenuItem::separator(app).unwrap();
     let quit = MenuItem::with_id(app, "quit", i18n.quit, true, None::<&str>).unwrap();
-    #[cfg(target_os = "windows")]
-    {
-        let _ = quit.set_icon(tray_icon::render_menu_icon("quit"));
-    }
     let set_key = MenuItem::with_id(app, "set_key", i18n.set_key, true, None::<&str>).unwrap();
     let clear_key =
         MenuItem::with_id(app, "clear_key", i18n.clear_key, true, None::<&str>).unwrap();
-    #[cfg(target_os = "windows")]
-    {
-        let _ = set_key.set_icon(tray_icon::render_menu_icon("set_key"));
-        let _ = clear_key.set_icon(tray_icon::render_menu_icon("clear_key"));
-    }
     let refresh = MenuItem::with_id(app, "refresh", i18n.refresh, true, None::<&str>).unwrap();
-    #[cfg(target_os = "windows")]
-    {
-        let _ = refresh.set_icon(tray_icon::render_menu_icon("refresh"));
-    }
     let toggle_show_percent = CheckMenuItem::with_id(
         app,
         "toggle_show_percent",
@@ -437,10 +425,6 @@ pub fn update_tray_menu(app: &AppHandle, state: &AppState) {
         None::<&str>,
     )
     .unwrap();
-    #[cfg(target_os = "windows")]
-    {
-        let _ = toggle_show_percent.set_icon(tray_icon::render_menu_icon("toggle_show_percent"));
-    }
 
     let mut items: Vec<Box<dyn tauri::menu::IsMenuItem<tauri::Wry>>> = vec![
         Box::new(MenuItem::with_id(app, "status", &status_text, false, None::<&str>).unwrap()),
@@ -462,10 +446,6 @@ pub fn update_tray_menu(app: &AppHandle, state: &AppState) {
                     None::<&str>,
                 )
                 .unwrap();
-                #[cfg(target_os = "windows")]
-                {
-                    let _ = model_item.set_icon(tray_icon::render_menu_icon("model"));
-                }
                 items.insert(2, Box::new(model_item));
             }
 
@@ -478,10 +458,6 @@ pub fn update_tray_menu(app: &AppHandle, state: &AppState) {
                     None::<&str>,
                 )
                 .unwrap();
-                #[cfg(target_os = "windows")]
-                {
-                    let _ = interval_item.set_icon(tray_icon::render_menu_icon("interval"));
-                }
                 items.insert(3, Box::new(interval_item));
             }
 
@@ -494,10 +470,6 @@ pub fn update_tray_menu(app: &AppHandle, state: &AppState) {
                     None::<&str>,
                 )
                 .unwrap();
-                #[cfg(target_os = "windows")]
-                {
-                    let _ = remaining_item.set_icon(tray_icon::render_menu_icon("remaining"));
-                }
                 items.insert(4, Box::new(remaining_item));
             }
 
@@ -510,10 +482,6 @@ pub fn update_tray_menu(app: &AppHandle, state: &AppState) {
                     None::<&str>,
                 )
                 .unwrap();
-                #[cfg(target_os = "windows")]
-                {
-                    let _ = weekly_item.set_icon(tray_icon::render_menu_icon("weekly_remaining"));
-                }
                 items.insert(5, Box::new(weekly_item));
             }
 
@@ -620,15 +588,6 @@ pub fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let clear_key_item =
         MenuItem::with_id(&app_handle, "clear_key", i18n.clear_key, true, None::<&str>).unwrap();
     let quit_item = MenuItem::with_id(&app_handle, "quit", i18n.quit, true, None::<&str>).unwrap();
-
-    #[cfg(target_os = "windows")]
-    {
-        let _ = refresh_item.set_icon(tray_icon::render_menu_icon("refresh"));
-        let _ = toggle_item.set_icon(tray_icon::render_menu_icon("toggle_show_percent"));
-        let _ = set_key_item.set_icon(tray_icon::render_menu_icon("set_key"));
-        let _ = clear_key_item.set_icon(tray_icon::render_menu_icon("clear_key"));
-        let _ = quit_item.set_icon(tray_icon::render_menu_icon("quit"));
-    }
 
     let menu = Menu::with_items(
         &app_handle,
