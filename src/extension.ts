@@ -10,9 +10,9 @@ import {
   selectCompactStateIcon,
   selectCompactStatusIcon,
 } from "./compactView";
-import { multiKeyState } from "./multiKeyState";
+import { multiKeyState, ApiKeyEntry } from "./multiKeyState";
+import { SecretStore } from "./secretStore";
 
-const SECRET_API_KEY = "minimaxUsage.apiKey";
 const REMAINS_ENDPOINT = "https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains";
 
 type ModelRemain = {
@@ -112,7 +112,6 @@ let countdownTimer: NodeJS.Timeout | undefined;
 let latestVm: UsageViewModel | null = null;
 let latestRawResponse: unknown = null;
 let lastUpdatedAt: Date | null = null;
-let hasApiKey = false;
 let isRefreshing = false;
 let hasAlertedHighRisk = false;
 let detailsPanel: vscode.WebviewPanel | undefined;
@@ -294,46 +293,59 @@ function getRuntimeStrings(config: ExtensionConfig = readConfig()) {
   } as const;
 }
 
+// SecretStore instance (multi-key)
+let secretStore: SecretStore | null = null;
+
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   contextRef = context;
   output = vscode.window.createOutputChannel(getRuntimeStrings().outputChannelName);
   context.subscriptions.push(output);
 
+  // Initialize multi-key support
+  secretStore = new SecretStore(context.secrets);
+  await loadMultiKeyState();
+
   registerCommands(context);
 
-  const existingApiKey = await context.secrets.get(SECRET_API_KEY);
-  hasApiKey = Boolean(existingApiKey);
+  // Load keys from config
 
   recreateStatusBarItem();
   restartRefreshTimer();
   restartCountdownTicker();
 
   context.subscriptions.push(
-    vscode.workspace.onDidChangeConfiguration((event) => {
+    vscode.workspace.onDidChangeConfiguration(async (event) => {
       if (!event.affectsConfiguration("minimaxUsage")) {
         return;
       }
 
       const alignmentChanged = event.affectsConfiguration("minimaxUsage.statusBarAlignment");
       const languageChanged = event.affectsConfiguration("minimaxUsage.language");
+      const keysChanged = event.affectsConfiguration("minimaxUsage.apiKeys");
+
       if (alignmentChanged) {
         recreateStatusBarItem();
       }
 
-  if (languageChanged && latestRawResponse) {
-    const rebuiltVm = rebuildUsageViewModelFromRaw(latestRawResponse);
-    if (rebuiltVm) {
-      latestVm = rebuiltVm;
-    }
-  }
+      if (keysChanged) {
+        await loadMultiKeyState();
+      }
 
-  restartRefreshTimer();
-  updateStatusBar();
-  updateDetailsPanel();
-}),
+      if (languageChanged && latestRawResponse) {
+        const rebuiltVm = rebuildUsageViewModelFromRaw(latestRawResponse);
+        if (rebuiltVm) {
+          latestVm = rebuiltVm;
+        }
+      }
+
+      restartRefreshTimer();
+      updateStatusBar();
+      updateDetailsPanel();
+    }),
   );
 
-  await refreshUsage("startup");
+  // Initial refresh of all active keys
+  await refreshAllUsageData();
 }
 
 export function deactivate(): void {
@@ -366,42 +378,32 @@ export function deactivate(): void {
 function registerCommands(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand("minimaxUsage.setApiKey", async () => {
-      const strings = getRuntimeStrings();
-      const input = await vscode.window.showInputBox({
-        title: strings.inputBoxTitle,
-        prompt: strings.inputBoxPrompt,
-        placeHolder: strings.inputBoxPlaceholder,
-        password: true,
-        ignoreFocusOut: true,
-      });
-
-      if (input === undefined) {
-        return;
-      }
-
-      const apiKey = input.trim();
-      const validation = validateApiKey(apiKey);
-      if (!validation.ok) {
-        vscode.window.showErrorMessage(validation.message);
-        return;
-      }
-
-      await context.secrets.store(SECRET_API_KEY, apiKey);
-      hasApiKey = true;
-      log("API key updated");
-      vscode.window.showInformationMessage(strings.infoApiKeySaved);
-      await refreshUsage("manual");
+      // Forward to addApiKey for multi-key flow
+      await vscode.commands.executeCommand("minimaxUsage.addApiKey");
     }),
 
     vscode.commands.registerCommand("minimaxUsage.clearApiKey", async () => {
       const strings = getRuntimeStrings();
-      await context.secrets.delete(SECRET_API_KEY);
-      hasApiKey = false;
+      const confirmed = await vscode.window.showWarningMessage(
+        "Delete all API keys?",
+        { modal: true },
+        "Delete",
+        "Cancel",
+      );
+      if (confirmed !== "Delete") return;
+      // Clear all keys from multiKeyState
+      const keys = multiKeyState.visibleKeys;
+      for (const key of keys) {
+        if (secretStore) { await secretStore.deleteKey(key.id); }
+      }
+      await saveApiKeys([]);
+      await setSelectedKey("ALL");
       latestVm = null;
       latestRawResponse = null;
       lastUpdatedAt = null;
-      log("API key cleared");
+      log("All API keys cleared");
       updateStatusBar();
+      updateDetailsPanel();
       vscode.window.showInformationMessage(strings.infoApiKeyCleared);
     }),
 
@@ -427,9 +429,149 @@ function registerCommands(context: vscode.ExtensionContext): void {
     // Switch to specific key from panel chip
     vscode.commands.registerCommand("minimaxUsage.switchToKey", async (keyId: string) => {
       if (!keyId || typeof keyId !== "string") { return; }
-      multiKeyState.selectedKeyId = keyId;
+      await setSelectedKey(keyId);
+    }),
+
+    // Add new API key
+    vscode.commands.registerCommand("minimaxUsage.addApiKey", async () => {
+      const name = await vscode.window.showInputBox({
+        prompt: "Enter a name for this API key",
+        placeHolder: "Personal",
+        ignoreFocusOut: true,
+      });
+      if (name === undefined) return;
+
+      const apiKeyInput = await vscode.window.showInputBox({
+        prompt: "Enter your MiniMax API key",
+        password: true,
+        ignoreFocusOut: true,
+      });
+      if (apiKeyInput === undefined) return;
+
+      const apiKey = apiKeyInput.trim();
+      const validation = validateApiKey(apiKey);
+      if (!validation.ok) {
+        vscode.window.showErrorMessage(validation.message);
+        return;
+      }
+
+      const newKey = await addApiKey(name, apiKey);
+      if (newKey) {
+        await refreshUsageForKey(newKey.id, "manual");
+        updateStatusBar();
+        vscode.window.showInformationMessage(`API key "${name}" added successfully`);
+      }
+    }),
+
+    // Update API key
+    vscode.commands.registerCommand("minimaxUsage.updateApiKey", async (keyId?: string) => {
+      const id = keyId || multiKeyState.selectedKeyId;
+      if (id === "ALL") {
+        vscode.window.showWarningMessage("Please select a specific key to update");
+        return;
+      }
+      const key = multiKeyState.getKeyById(id);
+      if (!key) return;
+
+      const name = await vscode.window.showInputBox({
+        prompt: "Enter a new name for this API key",
+        value: key.name,
+        ignoreFocusOut: true,
+      });
+      if (name === undefined) return;
+
+      const apiKeyInput = await vscode.window.showInputBox({
+        prompt: "Enter new API key (leave empty to keep current)",
+        password: true,
+        ignoreFocusOut: true,
+      });
+
+      const updates: Partial<ApiKeyEntry> & { key?: string } = { name };
+      if (apiKeyInput && apiKeyInput.trim()) {
+        const validation = validateApiKey(apiKeyInput.trim());
+        if (!validation.ok) {
+          vscode.window.showErrorMessage(validation.message);
+          return;
+        }
+        updates.key = apiKeyInput.trim();
+      }
+
+      await updateApiKey(id, updates);
       updateStatusBar();
-      updateDetailsPanel();
+      vscode.window.showInformationMessage(`API key "${name}" updated`);
+    }),
+
+    // Delete API key
+    vscode.commands.registerCommand("minimaxUsage.deleteApiKey", async (keyId?: string) => {
+      const id = keyId || multiKeyState.selectedKeyId;
+      if (id === "ALL") return;
+      const key = multiKeyState.getKeyById(id);
+      if (!key) return;
+
+      const confirmed = await vscode.window.showWarningMessage(
+        `Delete API key "${key.name}"?`,
+        { modal: true },
+        "Delete",
+        "Cancel",
+      );
+      if (confirmed !== "Delete") return;
+
+      await deleteApiKey(id);
+      updateStatusBar();
+      vscode.window.showInformationMessage(`API key "${key.name}" deleted`);
+    }),
+
+    // Show key switcher (QuickPick)
+    vscode.commands.registerCommand("minimaxUsage.showKeySwitcher", async () => {
+      const keys = multiKeyState.visibleKeys;
+      if (keys.length === 0) {
+        vscode.commands.executeCommand("minimaxUsage.addApiKey");
+        return;
+      }
+
+      const items: vscode.QuickPickItem[] = [
+        {
+          label: `$(globe) ALL Keys (${multiKeyState.activeKeys.length} active)`,
+          description: "Aggregate view of all keys",
+          picked: multiKeyState.selectedKeyId === "ALL",
+        },
+      ];
+
+      for (const key of keys) {
+        const data = multiKeyState.getUsageForKey(key.id);
+        const percent = data?.usedPercent != null ? `${Math.round(data.usedPercent)}%` : "--";
+        items.push({
+          label: `$(key) ${key.name}`,
+          description: `Usage: ${percent} ${!key.isActive ? "(inactive)" : ""}`,
+          picked: multiKeyState.selectedKeyId === key.id,
+          buttons: [
+            { iconPath: vscode.Uri.parse(""), tooltip: "Edit" },
+            { iconPath: vscode.Uri.parse(""), tooltip: "Delete" },
+          ],
+        });
+      }
+
+      const selected = await vscode.window.showQuickPick(items, {
+        placeHolder: "Select API key to view",
+      });
+
+      if (!selected) return;
+
+      if (selected.label.startsWith("$(globe)")) {
+        await setSelectedKey("ALL");
+      } else {
+        for (const key of keys) {
+          if (selected.label.includes(key.name)) {
+            await setSelectedKey(key.id);
+            break;
+          }
+        }
+      }
+    }),
+
+    // Refresh all keys
+    vscode.commands.registerCommand("minimaxUsage.refreshAll", async () => {
+      await refreshAllUsageData();
     }),
   );
 }
@@ -535,38 +677,34 @@ function restartCountdownTicker(): void {
   }, 1000);
 }
 
-async function refreshUsage(reason: "startup" | "auto" | "manual"): Promise<void> {
-  if (!contextRef || isRefreshing) {
-    return;
-  }
+// Refresh usage for a specific key
+async function refreshUsageForKey(keyId: string, reason: "startup" | "auto" | "manual"): Promise<void> {
+  if (!contextRef || isRefreshing) { return; }
 
   const strings = getRuntimeStrings();
+  if (!secretStore) { return; }
 
-  const apiKey = (await contextRef.secrets.get(SECRET_API_KEY))?.trim() ?? "";
-  hasApiKey = Boolean(apiKey);
-
-  if (!hasApiKey) {
-    latestVm = null;
-    latestRawResponse = null;
-    lastUpdatedAt = null;
+  const apiKey = await secretStore.loadKey(keyId);
+  if (!apiKey) {
+    multiKeyState.updateUsageForKey(keyId, buildErrorViewModel("API key not found"));
+    multiKeyState.updateUsageForKey(keyId, {
+      ok: false, statusLabel: "API key not found", primaryModelName: "",
+      minRemainingModelName: "", minRemainingWindow: "current" as const,
+      timeWindow: "", resetInLabel: "", resetTimestamp: null,
+      totalCount: null, remainingCount: null, minRemainingCount: null,
+      usedCount: null, usedPercent: null, weeklyTotalCount: null,
+      weeklyUsedCount: null, weeklyRemainingCount: null, weeklyUsedPercent: null,
+      weeklyResetTimestamp: null, weeklyResetInLabel: "",
+      intervalLabel: "", models: [], raw: null,
+    });
     updateStatusBar();
-
-    if (reason === "manual") {
-      void vscode.window.showWarningMessage(strings.warnSetApiKeyFirst);
-    }
-
     return;
   }
 
   const validation = validateApiKey(apiKey);
   if (!validation.ok) {
-    latestVm = buildErrorViewModel(validation.message);
-    latestRawResponse = null;
-    lastUpdatedAt = new Date();
+    multiKeyState.updateUsageForKey(keyId, buildErrorViewModel(validation.message));
     updateStatusBar();
-    if (reason === "manual") {
-      void vscode.window.showErrorMessage(validation.message);
-    }
     return;
   }
 
@@ -576,55 +714,90 @@ async function refreshUsage(reason: "startup" | "auto" | "manual"): Promise<void
 
     const timeoutMs = readConfig().requestTimeoutMs;
     const result = await fetchRemains(apiKey, timeoutMs);
+    const vm = buildUsageViewModel(result);
 
-    latestVm = buildUsageViewModel(result);
-    latestRawResponse = result.raw;
-    lastUpdatedAt = new Date();
+    multiKeyState.updateUsageForKey(keyId, vm);
 
-    const statusCodeLabel = result.statusCode === null ? "N/A" : String(result.statusCode);
-    log(`refresh completed [${reason}] ok=${result.ok} status=${statusCodeLabel} summary=${result.summary}`);
-
-    // 高风险弹窗提示逻辑
-    if (result.ok && latestVm && latestVm.minRemainingCount !== null) {
-      if (latestVm.minRemainingCount <= 5) {
-        if (!hasAlertedHighRisk) {
-          void vscode.window.showWarningMessage(
-            `${strings.warnRiskLowQuota}${latestVm.minRemainingCount}${strings.warnRiskLowQuotaSuffix}`,
-          );
-          hasAlertedHighRisk = true;
-        }
-      } else {
-        hasAlertedHighRisk = false;
-      }
+    // Update global latestVm for the selected key
+    if (multiKeyState.selectedKeyId === keyId || multiKeyState.selectedKeyId === "ALL") {
+      latestVm = multiKeyState.selectedKeyId === "ALL"
+        ? buildAggregateVm(multiKeyState.getAggregateMetrics())
+        : vm;
+      latestRawResponse = result.raw;
+      lastUpdatedAt = new Date();
     }
 
-      if (!result.ok && reason === "manual") {
-        void vscode.window.showErrorMessage(`${strings.errorQueryFailedPrefix}${result.summary}`);
+    log(`refresh key [${keyId}] [${reason}] ok=${result.ok} status=${result.statusCode ?? "N/A"}`);
+
+    // High-risk popup
+    if (result.ok && vm.minRemainingCount !== null && vm.minRemainingCount <= 5) {
+      if (!hasAlertedHighRisk) {
+        void vscode.window.showWarningMessage(
+          `${strings.warnRiskLowQuota}${vm.minRemainingCount}${strings.warnRiskLowQuotaSuffix}`,
+        );
+        hasAlertedHighRisk = true;
       }
-    } catch (error) {
+    } else {
+      hasAlertedHighRisk = false;
+    }
+
+    if (!result.ok && reason === "manual") {
+      void vscode.window.showErrorMessage(`${strings.errorQueryFailedPrefix}${result.summary}`);
+    }
+  } catch (error) {
     const message = error instanceof Error ? error.message : strings.errorUnknown;
+    multiKeyState.updateUsageForKey(keyId, buildErrorViewModel(message));
     latestVm = buildErrorViewModel(message);
     latestRawResponse = null;
     lastUpdatedAt = new Date();
-    log(`refresh exception [${reason}] ${message}`);
+    log(`refresh key [${keyId}] exception: ${message}`);
     if (reason === "manual") {
       void vscode.window.showErrorMessage(`${strings.errorQueryExceptionPrefix}${message}`);
     }
   } finally {
     isRefreshing = false;
     updateStatusBar();
-
-    // 手动刷新后，短暂隐藏/显示 status bar item 以强制刷新 tooltip
+    updateDetailsPanel();
     if (reason === "manual") {
-      for (const entry of statusItems) {
-        entry.item.hide();
-      }
-      setTimeout(() => {
-        for (const entry of statusItems) {
-          entry.item.show();
-        }
-      }, 50);
+      for (const entry of statusItems) { entry.item.hide(); }
+      setTimeout(() => { for (const entry of statusItems) { entry.item.show(); } }, 50);
     }
+  }
+}
+
+// Refresh all active keys in parallel
+async function refreshAllUsageData(): Promise<void> {
+  if (!contextRef || isRefreshing) { return; }
+  const keys = multiKeyState.activeKeys;
+  if (keys.length === 0) {
+    latestVm = null;
+    latestRawResponse = null;
+    lastUpdatedAt = null;
+    updateStatusBar();
+    return;
+  }
+  await Promise.all(keys.map(k => refreshUsageForKey(k.id, "startup")));
+  // Update latestVm to reflect the selected view
+  const selectedId = multiKeyState.selectedKeyId;
+  if (selectedId === "ALL") {
+    const agg = multiKeyState.getAggregateMetrics();
+    latestVm = buildAggregateVm(agg);
+  } else {
+    latestVm = multiKeyState.getUsageForKey(selectedId) || null;
+  }
+  latestRawResponse = null;
+  lastUpdatedAt = new Date();
+  updateStatusBar();
+  updateDetailsPanel();
+}
+
+// Legacy single-key refresh (redirects to currently selected key)
+async function refreshUsage(reason: "startup" | "auto" | "manual"): Promise<void> {
+  const selectedId = multiKeyState.selectedKeyId;
+  if (selectedId === "ALL") {
+    await refreshAllUsageData();
+  } else {
+    await refreshUsageForKey(selectedId, reason);
   }
 }
 
@@ -638,28 +811,36 @@ function updateStatusBar(): void {
   const basePriority = 100;
   const specs: StatusItemSpec[] = [];
 
-  if (isRefreshing && !latestVm) {
-    addStatusItem(
-      specs,
-      alignment,
-      basePriority,
-      `${selectCompactStateIcon("refreshing")} ${strings.statusQueryingCompact}`,
-      buildRefreshingTooltip(),
-      "minimaxUsage.showDetails",
-    );
+  const keys = multiKeyState.visibleKeys;
+  const activeKeys = multiKeyState.activeKeys;
+  const selectedId = multiKeyState.selectedKeyId;
+  const hasKeys = keys.length > 0;
+
+  // Get current display metrics
+  const agg = multiKeyState.getAggregateMetrics();
+  const currentMetrics = multiKeyState.getCurrentMetrics();
+  const displayVm = selectedId === "ALL"
+    ? buildAggregateVm(agg)
+    : (multiKeyState.getUsageForKey(selectedId) || null);
+
+  if (isRefreshing && !displayVm) {
+    const label = hasKeys
+      ? `${selectCompactStateIcon("refreshing")} ${strings.statusQueryingCompact} (${activeKeys.length}🔑)`
+      : `${selectCompactStateIcon("refreshing")} ${strings.statusQueryingCompact}`;
+    addStatusItem(specs, alignment, basePriority, label, buildRefreshingTooltip(), "minimaxUsage.showDetails");
     renderStatusItems(specs);
     updateDetailsPanel();
     return;
   }
 
-  if (!hasApiKey) {
+  if (!hasKeys) {
     addStatusItem(
       specs,
       alignment,
       basePriority,
       `${selectCompactStateIcon("missingKey")} ${strings.statusSetApiKeyCompact}`,
       buildMissingKeyTooltip(),
-      "minimaxUsage.setApiKey",
+      "minimaxUsage.addApiKey",
       new vscode.ThemeColor("statusBarItem.warningForeground"),
     );
     renderStatusItems(specs);
@@ -667,14 +848,15 @@ function updateStatusBar(): void {
     return;
   }
 
-  if (!latestVm) {
+  if (!displayVm) {
+    const label = `${selectCompactStateIcon("waiting")} ${activeKeys.length}🔑 ${strings.statusWaitingRefreshCompact}`;
     addStatusItem(
       specs,
       alignment,
       basePriority,
-      `${selectCompactStateIcon("waiting")} ${strings.statusWaitingRefreshCompact}`,
+      label,
       buildWaitingTooltip(),
-      "minimaxUsage.refresh",
+      "minimaxUsage.refreshAll",
       new vscode.ThemeColor("statusBarItem.prominentForeground"),
     );
     renderStatusItems(specs);
@@ -682,13 +864,14 @@ function updateStatusBar(): void {
     return;
   }
 
-  if (!latestVm.ok) {
+  if (!displayVm.ok) {
+    const keyLabel = selectedId === "ALL" ? `${activeKeys.length}🔑` : (multiKeyState.getKeyById(selectedId)?.name || selectedId.slice(0, 6));
     addStatusItem(
       specs,
       alignment,
       basePriority,
-      `${selectCompactStateIcon("error")} ${truncate(latestVm.statusLabel, 40)}`,
-      buildDetailsTooltip(latestVm, config),
+      `${selectCompactStateIcon("error")} ${keyLabel} ${truncate(displayVm.statusLabel, 30)}`,
+      buildDetailsTooltip(displayVm, config),
       "minimaxUsage.showDetails",
       new vscode.ThemeColor("statusBarItem.warningForeground"),
       new vscode.ThemeColor("statusBarItem.warningBackground"),
@@ -698,26 +881,19 @@ function updateStatusBar(): void {
     return;
   }
 
-  // 正常显示逻辑 - 简化格式
-  const tooltip = buildDetailsTooltip(latestVm, config);
-  const command = "minimaxUsage.showDetails";
-  const usedPercent = latestVm.usedPercent ?? 0;
-  const resetLabel = latestVm.resetTimestamp
-    ? formatEnglishCountdownFriendly(latestVm.resetTimestamp)
-    : "";
+  // Normal display - use aggregate or per-key metrics
+  const usedPercent = currentMetrics.percent;
+  const resetLabel = displayVm.resetTimestamp ? formatEnglishCountdownFriendly(displayVm.resetTimestamp) : "";
   const percentColor = selectCompactProgressColor(usedPercent);
   const weeklyPercent =
-    config.showWeeklyInStatusBar && latestVm.weeklyUsedPercent !== null
-      ? latestVm.weeklyUsedPercent ?? 0
+    config.showWeeklyInStatusBar && currentMetrics.percent > 0 && displayVm.weeklyUsedPercent !== null
+      ? displayVm.weeklyUsedPercent ?? 0
       : null;
   const weeklyResetLabel =
-    config.showWeeklyInStatusBar && latestVm.weeklyResetTimestamp
-      ? formatEnglishCountdownFriendly(latestVm.weeklyResetTimestamp)
+    config.showWeeklyInStatusBar && displayVm.weeklyResetTimestamp
+      ? formatEnglishCountdownFriendly(displayVm.weeklyResetTimestamp)
       : "";
-  const statusIcon = selectCompactStatusIcon({
-    currentPercent: usedPercent,
-    weeklyPercent,
-  });
+  const statusIcon = selectCompactStatusIcon({ currentPercent: usedPercent, weeklyPercent });
   const compactStatusText = buildCompactStatusText({
     icon: statusIcon,
     currentPercent: usedPercent,
@@ -726,13 +902,18 @@ function updateStatusBar(): void {
     weeklyResetLabel,
   });
 
+  // Key count indicator
+  const keyCountTag = selectedId === "ALL"
+    ? `${activeKeys.length}🔑`
+    : `🔑`;
+
   addStatusItem(
     specs,
     alignment,
     basePriority,
-    `${isRefreshing ? "$(sync~spin) " : ""}${compactStatusText}`,
-    tooltip,
-    command,
+    `${isRefreshing ? "$(sync~spin) " : ""}${keyCountTag} ${compactStatusText}`,
+    buildDetailsTooltip(displayVm, config),
+    "minimaxUsage.showDetails",
     percentColor,
   );
 
@@ -763,7 +944,7 @@ function buildMissingKeyTooltip(): vscode.MarkdownString {
   md.isTrusted = true;
   md.supportThemeIcons = true;
   md.appendMarkdown(`**${strings.tooltipTitle}**\n\n${strings.tooltipMissingKey}`);
-  md.appendMarkdown(`[$(key) ${strings.actionSetApiKey}](command:minimaxUsage.setApiKey)`);
+  md.appendMarkdown(`[$(key) ${strings.actionSetApiKey}](command:minimaxUsage.addApiKey)`);
   return md;
 }
 
@@ -889,14 +1070,16 @@ function renderDetailsPanelHtml(): string {
   currentLanguage: config.language === "auto" ? (vscode.env.language.toLowerCase().startsWith("zh") ? "zh-CN" : "en") : config.language,
 };
 
-  if (!hasApiKey) {
+  const panelHasKeys = multiKeyState.visibleKeys.length > 0;
+
+  if (!panelHasKeys) {
     return renderDetailsHtmlSkeleton(`
       <div class="empty-state">
         <div class="empty-icon-glow">🔑</div>
         <h2>${i18n.unconfiguredKey}</h2>
         <p>${i18n.unconfiguredDesc}</p>
         <div class="actions center">
-          <a class="btn btn-neon" href="command:minimaxUsage.setApiKey">
+          <a class="btn btn-neon" href="command:minimaxUsage.addApiKey">
             <span class="btn-text">${i18n.initAccess}</span>
           </a>
         </div>
@@ -929,7 +1112,7 @@ function renderDetailsPanelHtml(): string {
           <a class="btn btn-neon danger" href="command:minimaxUsage.refresh">
             <span class="btn-text">${i18n.reconnect}</span>
           </a>
-          <a class="btn" href="command:minimaxUsage.setApiKey">
+          <a class="btn" href="command:minimaxUsage.addApiKey">
             <span class="btn-text">${i18n.editKey}</span>
           </a>
         </div>
@@ -1125,7 +1308,7 @@ function renderDetailsPanelHtml(): string {
           <a class="action-link neon" href="command:minimaxUsage.refresh">
             <span class="link-icon">🔄</span> ${i18n.syncData}
           </a>
-          <a class="action-link" href="command:minimaxUsage.setApiKey">
+          <a class="action-link" href="command:minimaxUsage.addApiKey">
             <span class="link-icon">🔑</span> ${i18n.keyConfig}
           </a>
           <a class="action-link danger" href="command:minimaxUsage.clearApiKey">
@@ -2221,7 +2404,7 @@ function buildDetailsTooltip(vm: UsageViewModel, config: ExtensionConfig): vscod
   if (!vm.ok || vm.usedCount === null || vm.totalCount === null || vm.usedPercent === null) {
     md.appendMarkdown(`${escapeMarkdown(vm.statusLabel)}\n\n`);
     md.appendMarkdown(
-      `[$(refresh) ${strings.actionRefresh}](command:minimaxUsage.refresh) · [$(key) ${strings.actionSetKey}](command:minimaxUsage.setApiKey)`,
+      `[$(refresh) ${strings.actionRefresh}](command:minimaxUsage.refresh) · [$(key) ${strings.actionSetKey}](command:minimaxUsage.addApiKey)`,
     );
     return md;
   }
@@ -2244,10 +2427,130 @@ function buildDetailsTooltip(vm: UsageViewModel, config: ExtensionConfig): vscod
   md.appendMarkdown(compactTable);
   md.appendMarkdown("\n\n");
   md.appendMarkdown(
-    `[$(refresh) ${strings.actionRefresh}](command:minimaxUsage.refresh) · [$(key) ${strings.actionSetKey}](command:minimaxUsage.setApiKey)`,
+    `[$(refresh) ${strings.actionRefresh}](command:minimaxUsage.refresh) · [$(key) ${strings.actionSetKey}](command:minimaxUsage.addApiKey)`,
   );
 
   return md;
+}
+
+// Build UsageViewModel from AggregateMetrics (for status bar / panel)
+function buildAggregateVm(metrics: { used: number; remaining: number; total: number; percent: number; primaryModel: string; hasData: boolean }): UsageViewModel {
+  return {
+    ok: metrics.hasData,
+    statusLabel: metrics.hasData ? "OK" : "No data",
+    primaryModelName: metrics.primaryModel || "",
+    minRemainingModelName: "",
+    minRemainingWindow: "current" as const,
+    timeWindow: "",
+    resetInLabel: "",
+    resetTimestamp: null,
+    totalCount: metrics.total,
+    remainingCount: metrics.remaining,
+    minRemainingCount: null,
+    usedCount: metrics.used,
+    usedPercent: metrics.percent,
+    weeklyTotalCount: null,
+    weeklyUsedCount: null,
+    weeklyRemainingCount: null,
+    weeklyUsedPercent: null,
+    weeklyResetTimestamp: null,
+    weeklyResetInLabel: "",
+    intervalLabel: "",
+    models: [],
+    raw: null,
+  };
+}
+
+// Load API keys from config into multiKeyState
+async function loadMultiKeyState(): Promise<void> {
+  const config = vscode.workspace.getConfiguration("minimaxUsage");
+  const keys: ApiKeyEntry[] = config.get("apiKeys", []);
+  const selectedId: string = config.get("selectedKeyId", "ALL");
+  multiKeyState.setApiKeys(keys);
+  multiKeyState.selectedKeyId = selectedId;
+  log(`loaded ${keys.length} keys, selected=${selectedId}`);
+}
+
+// Save API keys to config
+async function saveApiKeys(keys: ApiKeyEntry[]): Promise<void> {
+  const config = vscode.workspace.getConfiguration("minimaxUsage");
+  await config.update("apiKeys", keys, vscode.ConfigurationTarget.Global);
+  multiKeyState.setApiKeys(keys);
+}
+
+// Save selected key ID to config
+async function setSelectedKey(keyId: string): Promise<void> {
+  const config = vscode.workspace.getConfiguration("minimaxUsage");
+  await config.update("selectedKeyId", keyId, vscode.ConfigurationTarget.Global);
+  multiKeyState.selectedKeyId = keyId;
+  // Update latestVm to reflect the new selection
+  if (keyId === "ALL") {
+    const agg = multiKeyState.getAggregateMetrics();
+    latestVm = buildAggregateVm(agg);
+  } else {
+    latestVm = multiKeyState.getUsageForKey(keyId) || null;
+  }
+  updateStatusBar();
+  updateDetailsPanel();
+}
+
+// Add a new API key
+async function addApiKey(name: string, apiKey: string): Promise<ApiKeyEntry | null> {
+  if (!secretStore) return null;
+
+  const existingKeys = multiKeyState.visibleKeys;
+  const usedColors = existingKeys.map((k) => k.color);
+  const palette = ["#00d4ff", "#ff6b6b", "#feca57", "#48dbfb", "#ff9ff3", "#1dd1a1", "#ff9f43", "#a29bfe"];
+  const color = palette.find((c) => !usedColors.includes(c)) || palette[0];
+
+  const id = `key_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const newKey: ApiKeyEntry = {
+    id,
+    name,
+    color,
+    refreshInterval: readConfig().refreshIntervalSeconds,
+    createdAt: Date.now(),
+    isActive: true,
+  };
+
+  await secretStore.saveKey(id, apiKey);
+  const updatedKeys = [...existingKeys, newKey];
+  await saveApiKeys(updatedKeys);
+  return newKey;
+}
+
+// Update an existing API key
+async function updateApiKey(id: string, updates: Partial<ApiKeyEntry> & { key?: string }): Promise<boolean> {
+  if (!secretStore) return false;
+
+  const existingKey = multiKeyState.getKeyById(id);
+  if (!existingKey) return false;
+
+  const updatedKey: ApiKeyEntry = { ...existingKey, ...updates, id };
+  if (updates.key) {
+    await secretStore.saveKey(id, updates.key);
+  }
+
+  const existingKeys = multiKeyState.visibleKeys;
+  const idx = existingKeys.findIndex((k) => k.id === id);
+  if (idx < 0) return false;
+
+  const updatedKeys = [...existingKeys];
+  updatedKeys[idx] = updatedKey;
+  await saveApiKeys(updatedKeys);
+  return true;
+}
+
+// Delete an API key
+async function deleteApiKey(id: string): Promise<void> {
+  if (!secretStore) return;
+  await secretStore.deleteKey(id);
+  multiKeyState.deleteKey(id);
+  const remaining = multiKeyState.visibleKeys;
+  await saveApiKeys(remaining);
+  if (multiKeyState.selectedKeyId === id) {
+    await setSelectedKey(remaining.length > 0 ? remaining[0].id : "ALL");
+  }
 }
 
 function validateApiKey(apiKey: string): { ok: boolean; message: string } {
