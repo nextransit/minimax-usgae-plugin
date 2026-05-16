@@ -1117,9 +1117,7 @@ function renderKeySwitcher() {
     const color = safeKeyColor(key.color);
     const glow = hexToRgba(color, 0.35);
     const data = state.usageData[key.id];
-    const pct = data && data.ok && data.total_count
-      ? Math.round((data.used_count / data.total_count) * 100)
-      : 0;
+    const pct = Math.round(percentFromUsage(data, 'used_count', 'total_count', 'used_percent'));
     const status = data && data.ok ? getStatus(pct) : 'normal';
     const selected = state.selectedKeyId === key.id ? 'selected' : '';
     const hiddenCls = key.is_active === false ? 'hidden-key' : '';
@@ -1197,6 +1195,7 @@ function renderAggregateView() {
   setFlipNumber('current-remaining-container', 'current-remaining', formatNumber(m.remaining));
   setText('current-total', formatNumber(m.total));
   setText('current-percent', `${Math.round(currentPercent)}%`);
+  setElementClass(document.getElementById('current-percent'), `progress-percent ${currentStatus}`);
   updateProgressBar('current-card', 'current-progress', currentPercent, currentStatus);
   updateRemainingBreath('current-remaining', 'current-remaining-wrapper', currentStatus);
 
@@ -1211,6 +1210,7 @@ function renderAggregateView() {
   setFlipNumber('weekly-remaining-container', 'weekly-remaining', formatNumber(m.weeklyRemaining));
   setText('weekly-total', formatNumber(m.weeklyTotal));
   setText('weekly-percent', `${Math.round(weeklyPercent)}%`);
+  setElementClass(document.getElementById('weekly-percent'), `progress-percent ${weeklyStatus}`);
   updateProgressBar('weekly-card', 'weekly-progress', weeklyPercent, weeklyStatus);
   updateRemainingBreath('weekly-remaining', 'weekly-remaining-wrapper', weeklyStatus);
 
@@ -1265,6 +1265,7 @@ function renderAggregateView() {
 
 function renderBreakdownList() {
   const container = document.getElementById('breakdown-list');
+
   if (!container) return;
 
   const order = state.reorderDraft && state.reorderDraft.length === state.apiKeys.length
@@ -1282,18 +1283,14 @@ function renderBreakdownList() {
 function renderKeyDetailCard(key) {
   const color = safeKeyColor(key.color);
   const data = state.usageData[key.id];
+  const currentPct = percentFromUsage(data, 'used_count', 'total_count', 'used_percent');
+  const weeklyPct = percentFromUsage(data, 'weekly_used_count', 'weekly_total_count', 'weekly_used_percent');
   const isHidden = key.is_active === false;
   const isLoading = state.pendingRefreshKeyIds.has(key.id);
+  console.log('[renderKeyDetailCard]', key.id, 'currentPct:', currentPct, 'weeklyPct:', weeklyPct, 'isLoading:', isLoading, 'dataKeys:', data ? Object.keys(data).filter(k => k.includes('count') || k.includes('percent')) : 'NO_DATA');
   const inlineError = state.perKeyError[key.id];
   const expanded = state.expandedKeyIds.has(key.id);
   const confirmingDelete = state.deleteConfirmKeyId === key.id;
-
-  const currentPct = data && data.ok && data.total_count
-    ? clampPercent((data.used_count / data.total_count) * 100)
-    : 0;
-  const weeklyPct = data && data.ok && data.weekly_total_count
-    ? clampPercent((data.weekly_used_count / data.weekly_total_count) * 100)
-    : 0;
 
   const currentStatus = data && data.ok ? getStatus(currentPct) : 'normal';
   const weeklyStatus = data && data.ok ? getStatus(weeklyPct) : 'normal';
@@ -1326,15 +1323,23 @@ function renderKeyDetailCard(key) {
       <button class="breakdown-action-btn" data-action="toggle-expand" data-key-id="${escapeHtml(key.id)}" title="${t(expanded ? 'collapseDetails' : 'expandDetails')}">${expanded ? '▴' : '▾'}</button>
     `;
 
-  const metricRow = (label, pct, status, used, total, reset, kindSuffix) => `
+  const metricRow = (label, pct, status, used, total, reset, kindSuffix) => {
+    // shimmer 时不设内联样式，让 CSS breakdown-shimmer 规则（渐变 + width:100%）生效
+    // 非 shimmer：内联 width + 硬编码背景色
+    const fillStyle = isLoading
+      ? ''
+      : `width: ${clampPercent(pct)}%; background: ${status === 'critical' ? '#ff2e63' : (status === 'warning' ? '#f59e0b' : color)};`;
+
+    return `
     <div class="breakdown-metric-row ${status} ${isLoading ? 'breakdown-shimmer' : ''}">
       <span class="metric-label">${label}</span>
-      <div class="metric-bar"><div class="metric-bar-fill" style="width: ${pct}%;"></div></div>
+      <div class="metric-bar"><div class="metric-bar-fill" style="${fillStyle}"></div></div>
       <span class="metric-pct">${data && data.ok ? Math.round(pct) + '%' : '—'}</span>
       <span class="metric-numbers">${data && data.ok ? `${formatNumber(used)} / ${formatNumber(total)}` : '—'}</span>
-      <span class="metric-reset" data-timestamp="${reset || 0}" data-reset-kind="${kindSuffix}">--:--:--</span>
+      <span class="metric-reset" data-timestamp="${reset || 0}" data-reset-kind="${kindSuffix}">&nbsp;</span>
     </div>
   `;
+  };
 
   const modelRows = expanded && data && data.ok && Array.isArray(data.models)
     ? data.models.map(model => `
@@ -1438,30 +1443,28 @@ function renderSingleKeyView(keyId) {
   setText('primary-model', data && data.ok ? (data.primary_model_name || t('unknown')) : t('unknown'));
   setText('interval-label', data && data.ok ? (data.interval_label || t('na')) : (inlineError ? t('syncFailed') : t('waitingData')));
 
-  const currentPercent = data && data.ok && data.total_count
-    ? clampPercent((data.used_count / data.total_count) * 100)
-    : 0;
+  const currentPercent = percentFromUsage(data, 'used_count', 'total_count', 'used_percent');
   const currentStatus = data && data.ok ? getStatus(currentPercent) : 'normal';
 
   setText('current-used', data && data.ok ? formatNumber(data.used_count) : '—');
   setFlipNumber('current-remaining-container', 'current-remaining', data && data.ok ? formatNumber(data.remaining_count) : '—');
   setText('current-total', data && data.ok ? formatNumber(data.total_count) : '—');
   setText('current-percent', data && data.ok ? `${Math.round(currentPercent)}%` : '--%');
+  setElementClass(document.getElementById('current-percent'), `progress-percent ${currentStatus}`);
   updateProgressBar('current-card', 'current-progress', currentPercent, currentStatus);
   updateRemainingBreath('current-remaining', 'current-remaining-wrapper', currentStatus);
   if (data && data.reset_timestamp) {
     setElementAttr(document.getElementById('window-countdown'), 'data-timestamp', data.reset_timestamp);
   }
 
-  const weeklyPercent = data && data.ok && data.weekly_total_count
-    ? clampPercent((data.weekly_used_count / data.weekly_total_count) * 100)
-    : 0;
+  const weeklyPercent = percentFromUsage(data, 'weekly_used_count', 'weekly_total_count', 'weekly_used_percent');
   const weeklyStatus = data && data.ok ? getStatus(weeklyPercent) : 'normal';
 
   setText('weekly-used', data && data.ok ? formatNumber(data.weekly_used_count) : '—');
   setFlipNumber('weekly-remaining-container', 'weekly-remaining', data && data.ok ? formatNumber(data.weekly_remaining_count) : '—');
   setText('weekly-total', data && data.ok ? formatNumber(data.weekly_total_count) : '—');
   setText('weekly-percent', data && data.ok ? `${Math.round(weeklyPercent)}%` : '--%');
+  setElementClass(document.getElementById('weekly-percent'), `progress-percent ${weeklyStatus}`);
   updateProgressBar('weekly-card', 'weekly-progress', weeklyPercent, weeklyStatus);
   updateRemainingBreath('weekly-remaining', 'weekly-remaining-wrapper', weeklyStatus);
   if (data && data.weekly_reset_timestamp) {
@@ -1746,14 +1749,34 @@ function renderModelDetails(data) {
 function updateProgressBar(cardId, progressId, percent, status) {
   const card = document.getElementById(cardId);
   const progress = document.getElementById(progressId);
+  const normalizedStatus = status || 'normal';
+  const isWeeklyProgress = progressId === 'weekly-progress';
+  const isSingleKey = document.getElementById('dashboard')?.classList.contains('single-key');
 
-  setElementClass(card, `cyber-card ${status}`);
+  setElementClass(card, `cyber-card ${isWeeklyProgress ? 'secondary ' : ''}${normalizedStatus}`);
   if (progress) {
-    const width = `${percent}%`;
+    const width = `${clampPercent(percent)}%`;
     if (progress.style.width !== width) {
       progress.style.width = width;
     }
-    setElementClass(progress, `progress-thumb ${status === 'secondary' ? 'secondary' : ''} ${status}`);
+
+    // 显式设置 background，按状态区分颜色（替代 HTML 中的内联 background）
+    let background;
+    if (normalizedStatus === 'critical') {
+      background = 'var(--danger)';
+    } else if (normalizedStatus === 'warning') {
+      background = 'var(--warning)';
+    } else if (isSingleKey) {
+      // 单 key 视图 normal 状态跟随 key 颜色
+      background = 'var(--key-color)';
+    } else if (isWeeklyProgress) {
+      background = 'linear-gradient(90deg, #8b5cf6, var(--secondary))';
+    } else {
+      background = 'linear-gradient(90deg, #3b82f6, var(--primary))';
+    }
+    progress.style.background = background;
+
+    setElementClass(progress, `progress-thumb ${isWeeklyProgress ? 'secondary ' : ''}${normalizedStatus}`);
   }
 }
 
@@ -1870,6 +1893,25 @@ function getAggregatePercent() {
   const m = getAggregateMetrics();
   if (!m.total) return 0;
   return clampPercent((m.used / m.total) * 100);
+}
+
+function percentFromUsage(data, usedField, totalField, percentField) {
+  if (!data || !data.ok) return 0;
+  const reportedPercent = data[percentField];
+  if (typeof reportedPercent === 'number' && Number.isFinite(reportedPercent)) {
+    return clampPercent(reportedPercent);
+  }
+
+  const used = data[usedField];
+  const total = data[totalField];
+  if (typeof used !== 'number' || typeof total !== 'number' || total <= 0) {
+    return 0;
+  }
+  return clampPercent((used / total) * 100);
+}
+
+function formatMetricScale(percent) {
+  return (clampPercent(percent) / 100).toFixed(4);
 }
 
 function maskApiKey(raw) {
@@ -2288,7 +2330,7 @@ async function deleteKey(keyId) {
 }
 
 function formatCountdown(timestamp) {
-  if (!timestamp || timestamp <= 0) return '--:--:--';
+  if (!timestamp || timestamp <= 0) return '';
   const now = Date.now();
   const diff = timestamp - now;
   if (diff <= 0) return '00:00:00';

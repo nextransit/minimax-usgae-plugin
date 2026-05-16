@@ -3,7 +3,6 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost">
   <title>MiniMax Usage Monitor</title>
   <style>
 :root {
@@ -1478,15 +1477,25 @@ body {
 
 .breakdown-metric-row .metric-bar-fill {
   position: absolute;
-  inset: 0 auto 0 0;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 0%;
   background: var(--key-color);
   border-radius: 2px;
-  width: 0%;
   transition: width 0.4s ease;
+  will-change: width;
 }
 
-.breakdown-metric-row.warning .metric-bar-fill { box-shadow: 0 0 8px var(--warning); }
-.breakdown-metric-row.critical .metric-bar-fill { box-shadow: 0 0 10px var(--danger); }
+.breakdown-metric-row.warning .metric-bar-fill {
+  background: var(--warning);
+  box-shadow: 0 0 8px var(--warning);
+}
+
+.breakdown-metric-row.critical .metric-bar-fill {
+  background: var(--danger);
+  box-shadow: 0 0 10px var(--danger);
+}
 
 .breakdown-metric-row .metric-pct {
   font-variant-numeric: tabular-nums;
@@ -1535,7 +1544,7 @@ body {
 .breakdown-shimmer .metric-bar-fill {
   background: linear-gradient(90deg, var(--key-color), transparent, var(--key-color));
   background-size: 200% 100%;
-  width: 100% !important;
+  width: 100%;
   animation: shimmer-slide 1.4s linear infinite;
 }
 
@@ -1720,7 +1729,7 @@ body {
             <h3 class="card-title"><span class="icon">⚡</span> <span data-i18n="currentInterval">CURRENT INTERVAL</span></h3>
             <div class="reset-timer">
               <span class="timer-icon">⏳</span>
-              <span id="window-countdown" class="timer-value" data-timestamp="0">--:--:--</span>
+              <span id="window-countdown" class="timer-value" data-timestamp="0">&nbsp;</span>
             </div>
           </div>
 
@@ -1750,7 +1759,7 @@ body {
             </div>
             <div class="cyber-progress-bar">
               <div class="progress-track"></div>
-              <div id="current-progress" class="progress-thumb normal" style="width: 0%">
+              <div id="current-progress" class="progress-thumb normal" style="width: 0%;">
                 <div class="thumb-glow"></div>
               </div>
             </div>
@@ -1764,7 +1773,7 @@ body {
             <h3 class="card-title"><span class="icon">🗓️</span> <span data-i18n="weeklyAggregate">WEEKLY AGGREGATE</span></h3>
             <div class="reset-timer">
               <span class="timer-icon">🕒</span>
-              <span id="weekly-countdown" class="timer-value" data-timestamp="0">--:--:--</span>
+              <span id="weekly-countdown" class="timer-value" data-timestamp="0">&nbsp;</span>
             </div>
           </div>
 
@@ -1794,7 +1803,7 @@ body {
             </div>
             <div class="cyber-progress-bar">
               <div class="progress-track"></div>
-              <div id="weekly-progress" class="progress-thumb secondary normal" style="width: 0%">
+              <div id="weekly-progress" class="progress-thumb secondary normal" style="width: 0%;">
                 <div class="thumb-glow"></div>
               </div>
             </div>
