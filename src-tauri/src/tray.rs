@@ -1,4 +1,5 @@
-use crate::state::{AppState, UsageData};
+use crate::state::{AppConfig, AppState, UsageData};
+use std::collections::HashMap;
 #[cfg(not(target_os = "macos"))]
 use crate::tray_icon;
 use tauri::{
@@ -184,14 +185,106 @@ fn is_chinese_language(language: &str) -> bool {
         .any(|locale| locale.to_ascii_lowercase().contains("zh"))
 }
 
-pub fn build_status_text(usage: &UsageData, show_percent: bool) -> String {
-    if !show_percent {
-        return "MiniMax Monitor".to_string();
+/// 汇总所有 API Key 的使用数据
+#[derive(Debug, Clone, Default)]
+pub struct SummaryUsageData {
+    pub total_count: Option<i64>,
+    pub remaining_count: Option<i64>,
+    pub used_count: Option<i64>,
+    pub used_percent: Option<f64>,
+    pub weekly_total_count: Option<i64>,
+    pub weekly_remaining_count: Option<i64>,
+    pub weekly_used_count: Option<i64>,
+    pub weekly_used_percent: Option<f64>,
+    pub active_keys_count: usize,
+    pub loaded_keys_count: usize,
+    pub has_error: bool,
+}
+
+impl SummaryUsageData {
+    /// 计算所有 API Key 的汇总使用数据
+    pub fn from_usage_map(config: &AppConfig, usage: &HashMap<String, UsageData>) -> Self {
+        let mut summary = SummaryUsageData::default();
+        let mut total_count = 0i64;
+        let mut remaining_count = 0i64;
+        let mut used_count = 0i64;
+        let mut weekly_total_count = 0i64;
+        let mut weekly_remaining_count = 0i64;
+        let mut weekly_used_count = 0i64;
+        let mut has_any_data = false;
+
+        // 遍历所有配置的 API Key
+        for entry in &config.api_keys {
+            if let Some(data) = usage.get(&entry.id) {
+                summary.loaded_keys_count += 1;
+                if data.ok {
+                    has_any_data = true;
+                    // 累计月度数据
+                    if let Some(cnt) = data.total_count {
+                        total_count += cnt;
+                    }
+                    if let Some(cnt) = data.remaining_count {
+                        remaining_count += cnt;
+                    }
+                    if let Some(cnt) = data.used_count {
+                        used_count += cnt;
+                    }
+                    // 累计周度数据
+                    if let Some(cnt) = data.weekly_total_count {
+                        weekly_total_count += cnt;
+                    }
+                    if let Some(cnt) = data.weekly_remaining_count {
+                        weekly_remaining_count += cnt;
+                    }
+                    if let Some(cnt) = data.weekly_used_count {
+                        weekly_used_count += cnt;
+                    }
+                } else {
+                    summary.has_error = true;
+                }
+            }
+        }
+
+        // 计算百分比
+        if total_count > 0 {
+            summary.total_count = Some(total_count);
+            summary.remaining_count = Some(remaining_count);
+            summary.used_count = Some(used_count);
+            summary.used_percent = Some((used_count as f64 / total_count as f64) * 100.0);
+        } else if has_any_data {
+            summary.used_percent = Some(0.0);
+        }
+
+        if weekly_total_count > 0 {
+            summary.weekly_total_count = Some(weekly_total_count);
+            summary.weekly_remaining_count = Some(weekly_remaining_count);
+            summary.weekly_used_count = Some(weekly_used_count);
+            summary.weekly_used_percent = Some((weekly_used_count as f64 / weekly_total_count as f64) * 100.0);
+        } else if has_any_data {
+            summary.weekly_used_percent = Some(0.0);
+        }
+
+        summary.active_keys_count = config.api_keys.iter().filter(|e| e.is_active).count();
+
+        summary
+    }
+}
+
+/// 格式化汇总使用数据为托盘标题
+fn format_summary_tray_usage(summary: &SummaryUsageData) -> Option<String> {
+    if summary.active_keys_count == 0 {
+        return None;
     }
 
-    format_tray_usage(usage.used_percent, usage.weekly_used_percent)
-        .unwrap_or_else(|| "%--/%--".to_string())
+    // 如果没有任何加载的数据，返回 key 数量
+    if summary.used_percent.is_none() && summary.weekly_used_percent.is_none() {
+        return Some(format!("{}🔑", summary.active_keys_count));
+    }
+
+    format_tray_usage(summary.used_percent, summary.weekly_used_percent)
 }
+
+
 
 fn format_percent(percent: Option<f64>) -> Option<String> {
     percent.map(|p| format!("{:.0}", p))
@@ -269,8 +362,27 @@ pub fn update_tray_menu(app: &AppHandle, state: &AppState) {
         .find_map(|entry| usage.get(&entry.id))
         .or_else(|| usage.values().next());
 
-    let status_text = if let Some(ref data) = primary_usage {
-        build_status_text(data, config.show_percent_in_tray)
+
+    // 计算所有 API Key 的汇总数据
+    let summary = SummaryUsageData::from_usage_map(&config, &usage);
+
+    // 构建状态文本（基于汇总数据）
+    let status_text = if summary.active_keys_count > 0 {
+        if summary.has_error {
+            format!("⚠️ {} API Key(s)", summary.active_keys_count)
+        } else if summary.used_percent.is_some() {
+            if config.show_percent_in_tray {
+                if let Some(pct) = summary.used_percent {
+                    format!("{:.0}% / {:.0}%", pct, summary.weekly_used_percent.unwrap_or(0.0))
+                } else {
+                    i18n.app_name.to_string()
+                }
+            } else {
+                i18n.app_name.to_string()
+            }
+        } else {
+            i18n.loading_hint.to_string()
+        }
     } else if api_key.is_none() {
         if config.show_percent_in_tray {
             i18n.set_key_hint.to_string()
@@ -418,12 +530,22 @@ pub fn update_tray_menu(app: &AppHandle, state: &AppState) {
         .unwrap();
 
     if let Some(tray) = state.tray.lock().unwrap().as_ref() {
+        // 使用汇总数据生成托盘标题
         let tray_title = if config.show_percent_in_tray {
-            primary_usage
-                .and_then(|data| format_tray_usage(data.used_percent, data.weekly_used_percent))
-                .unwrap_or_else(|| "MM".to_string())
+            format_summary_tray_usage(&summary)
+                .unwrap_or_else(|| {
+                    if summary.active_keys_count > 0 {
+                        format!("{}🔑", summary.active_keys_count)
+                    } else {
+                        "MM".to_string()
+                    }
+                })
         } else {
-            "MM".to_string()
+            if summary.active_keys_count > 0 {
+                format!("{}🔑", summary.active_keys_count)
+            } else {
+                "MM".to_string()
+            }
         };
 
         set_tray_title_with_color(app, tray, Some(&tray_title));
