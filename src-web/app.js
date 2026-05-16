@@ -475,12 +475,16 @@ async function init() {
   state.lastError = '';
   applyI18n();
   setupUiHandlers();
+  applyPlatformAdaptations();
   render();
   startCountdownTimer();
   uiReady = true;
 
   try {
-    const tauri = await waitForTauriAPI(TAURI_API_READY_TIMEOUT_MS);
+    const tauri = getTauriAPI();
+    if (!tauri) {
+      throw new Error('__TAURI__ API not available');
+    }
     tauriInvoke = tauri.invoke;
     tauriListen = tauri.listen;
 
@@ -604,6 +608,25 @@ function showStartupError(error, options = {}) {
     errorMsg.textContent = recoverable
       ? `启动后台连接失败，页面已进入离线模式: ${String(error)}`
       : `Startup failed: ${String(error)}`;
+  }
+}
+
+function applyPlatformAdaptations() {
+  if (window.__TAURI__ && window.__TAURI__.platform === 'vscode') {
+    var tauriOnlyIds = [
+      'setting-start-minimized',
+      'setting-autostart',
+      'setting-notifications',
+      'setting-show-percent-in-tray',
+      'setting-tray-icon-style',
+    ];
+    tauriOnlyIds.forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) {
+        var item = el.closest('.setting-item');
+        if (item) item.style.display = 'none';
+      }
+    });
   }
 }
 
