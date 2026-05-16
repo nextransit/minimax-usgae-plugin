@@ -403,12 +403,10 @@ pub fn update_tray_menu(app: &AppHandle, state: &AppState) {
         } else {
             i18n.app_name.to_string()
         }
+    } else if config.show_percent_in_tray {
+        i18n.loading_hint.to_string()
     } else {
-        if config.show_percent_in_tray {
-            i18n.loading_hint.to_string()
-        } else {
-            i18n.app_name.to_string()
-        }
+        i18n.app_name.to_string()
     };
 
     let separator = PredefinedMenuItem::separator(app).unwrap();
@@ -453,13 +451,13 @@ pub fn update_tray_menu(app: &AppHandle, state: &AppState) {
         Box::new(clear_key),
     ];
 
-    if let Some(ref data) = primary_usage {
+    if let Some(data) = primary_usage {
         if data.ok {
             if !data.primary_model_name.is_empty() {
                 let model_item = MenuItem::with_id(
                     app,
                     "model",
-                    &format!("{}: {}", i18n.model_prefix, data.primary_model_name),
+                    format!("{}: {}", i18n.model_prefix, data.primary_model_name),
                     false,
                     None::<&str>,
                 )
@@ -475,7 +473,7 @@ pub fn update_tray_menu(app: &AppHandle, state: &AppState) {
                 let interval_item = MenuItem::with_id(
                     app,
                     "interval",
-                    &format!("{}: {}", i18n.interval_prefix, data.interval_label),
+                    format!("{}: {}", i18n.interval_prefix, data.interval_label),
                     false,
                     None::<&str>,
                 )
@@ -491,7 +489,7 @@ pub fn update_tray_menu(app: &AppHandle, state: &AppState) {
                 let remaining_item = MenuItem::with_id(
                     app,
                     "remaining",
-                    &format!("{}: {}", i18n.remaining_prefix, remaining),
+                    format!("{}: {}", i18n.remaining_prefix, remaining),
                     false,
                     None::<&str>,
                 )
@@ -507,7 +505,7 @@ pub fn update_tray_menu(app: &AppHandle, state: &AppState) {
                 let weekly_item = MenuItem::with_id(
                     app,
                     "weekly_remaining",
-                    &format!("{}: {}", i18n.weekly_remaining_prefix, weekly_remaining),
+                    format!("{}: {}", i18n.weekly_remaining_prefix, weekly_remaining),
                     false,
                     None::<&str>,
                 )
@@ -524,7 +522,7 @@ pub fn update_tray_menu(app: &AppHandle, state: &AppState) {
                 let updated_item = MenuItem::with_id(
                     app,
                     "updated",
-                    &format!("{}: {}", i18n.updated_prefix, data.last_updated),
+                    format!("{}: {}", i18n.updated_prefix, data.last_updated),
                     false,
                     None::<&str>,
                 )
@@ -536,7 +534,7 @@ pub fn update_tray_menu(app: &AppHandle, state: &AppState) {
             let error_item = MenuItem::with_id(
                 app,
                 "error",
-                &format!("⚠️ {}", data.status_label),
+                format!("⚠️ {}", data.status_label),
                 false,
                 None::<&str>,
             )
@@ -561,19 +559,17 @@ pub fn update_tray_menu(app: &AppHandle, state: &AppState) {
                     "MM".to_string()
                 }
             })
+        } else if summary.active_keys_count > 0 {
+            format!("{}🔑", summary.active_keys_count)
         } else {
-            if summary.active_keys_count > 0 {
-                format!("{}🔑", summary.active_keys_count)
-            } else {
-                "MM".to_string()
-            }
+            "MM".to_string()
         };
 
         set_tray_title_with_color(app, tray, Some(&tray_title));
 
         // Update tooltip with rich usage details (Windows/Linux)
         #[cfg(not(target_os = "macos"))]
-        if let Some(ref data) = primary_usage {
+        if let Some(data) = primary_usage {
             let i18n2 = tray_i18n(&config.language);
             let tooltip_text = build_tooltip(data, &i18n2);
             let _ = tray.set_tooltip(Some(&tooltip_text));

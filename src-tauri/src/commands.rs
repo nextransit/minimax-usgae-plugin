@@ -248,19 +248,16 @@ pub fn cmd_update_api_key(
     api_key: Option<String>,
 ) -> Result<(), String> {
     // If updating the key itself, extract keychain info first (must borrow before lock is released)
-    let keychain_update = api_key
-        .as_ref()
-        .map(|new_key| {
-            let config = state.config.lock().unwrap();
-            config.api_keys.iter().find(|e| e.id == id).map(|e| {
-                (
-                    e.keychain_service.clone(),
-                    e.keychain_account.clone(),
-                    new_key.clone(),
-                )
-            })
+    let keychain_update = api_key.as_ref().and_then(|new_key| {
+        let config = state.config.lock().unwrap();
+        config.api_keys.iter().find(|e| e.id == id).map(|e| {
+            (
+                e.keychain_service.clone(),
+                e.keychain_account.clone(),
+                new_key.clone(),
+            )
         })
-        .flatten();
+    });
 
     let mut config = state.config.lock().unwrap();
     if let Some(entry) = config.api_keys.iter_mut().find(|e| e.id == id) {

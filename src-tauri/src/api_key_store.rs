@@ -15,7 +15,7 @@ const DISABLE_KEYCHAIN_ENV: &str = "MINIMAX_MONITOR_DISABLE_KEYCHAIN";
 fn keychain_disabled() -> bool {
     // For multi-key support, default to file-based storage to avoid macOS Keychain popup issues
     // Users can enable keychain by setting MINIMAX_MONITOR_DISABLE_KEYCHAIN=0
-    if let Some(value) = std::env::var(DISABLE_KEYCHAIN_ENV).ok() {
+    if let Ok(value) = std::env::var(DISABLE_KEYCHAIN_ENV) {
         let normalized = value.trim().to_ascii_lowercase();
         return !(normalized == "0" || normalized == "false");
     }
@@ -64,10 +64,9 @@ fn config_dir() -> Result<PathBuf, String> {
             dirs::home_dir().map(|home| {
                 #[cfg(target_os = "macos")]
                 {
-                    return home
-                        .join("Library")
+                    home.join("Library")
                         .join("Application Support")
-                        .join("minimax-usage-monitor");
+                        .join("minimax-usage-monitor")
                 }
                 #[cfg(not(target_os = "macos"))]
                 {

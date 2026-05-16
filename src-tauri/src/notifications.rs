@@ -20,8 +20,8 @@ pub fn check_and_notify(app: &AppHandle, key_id: &str, key_name: &str, min_remai
         let _ = app
             .notification()
             .builder()
-            .title(&format!("⚠️ {} - 额度告警", key_name))
-            .body(&format!(
+            .title(format!("⚠️ {} - 额度告警", key_name))
+            .body(format!(
                 "[{}] 最小剩余请求次数即将耗尽！仅剩 {} 次",
                 key_id, min_remaining_count
             ))
@@ -30,8 +30,8 @@ pub fn check_and_notify(app: &AppHandle, key_id: &str, key_name: &str, min_remai
         let _ = app
             .notification()
             .builder()
-            .title(&format!("⚡ {} - 额度提醒", key_name))
-            .body(&format!(
+            .title(format!("⚡ {} - 额度提醒", key_name))
+            .body(format!(
                 "[{}] 最小剩余请求次数仅 {} 次，请注意配额消耗",
                 key_id, min_remaining_count
             ))

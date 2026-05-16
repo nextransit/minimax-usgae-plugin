@@ -187,19 +187,18 @@ pub async fn fetch_minimax_usage(
             let total = m.current_interval_total_count.unwrap_or(0);
             let remaining = m.current_interval_usage_count.unwrap_or(0);
             let used = total.saturating_sub(remaining);
-            let (time_window, _) = if m.start_time.is_some() && m.end_time.is_some() {
-                let start = m.start_time.unwrap();
-                let end = m.end_time.unwrap();
-                let start_dt = DateTime::from_timestamp(start / 1000, 0)
-                    .unwrap_or_else(|| Utc::now().with_timezone(&Utc));
-                let end_dt = DateTime::from_timestamp(end / 1000, 0)
-                    .unwrap_or_else(|| Utc::now().with_timezone(&Utc));
-                (
-                    format!("{} ~ {}", start_dt.format("%H:%M"), end_dt.format("%H:%M")),
-                    (),
-                )
-            } else {
-                ("00:00 ~ 00:00".to_string(), ())
+            let (time_window, _) = match (m.start_time, m.end_time) {
+                (Some(start), Some(end)) => {
+                    let start_dt = DateTime::from_timestamp(start / 1000, 0)
+                        .unwrap_or_else(|| Utc::now().with_timezone(&Utc));
+                    let end_dt = DateTime::from_timestamp(end / 1000, 0)
+                        .unwrap_or_else(|| Utc::now().with_timezone(&Utc));
+                    (
+                        format!("{} ~ {}", start_dt.format("%H:%M"), end_dt.format("%H:%M")),
+                        (),
+                    )
+                }
+                _ => ("00:00 ~ 00:00".to_string(), ()),
             };
             ModelDetail {
                 name: m
@@ -244,7 +243,7 @@ fn fetch_minimax_payload_blocking(
     timeout_ms: u64,
 ) -> Result<MiniMaxResponse, Box<dyn std::error::Error + Send + Sync>> {
     match fetch_minimax_payload_reqwest(api_key, timeout_ms) {
-        Ok(payload) => return Ok(payload),
+        Ok(payload) => Ok(payload),
         Err(error) => {
             let reqwest_error = format_reqwest_error(&error);
             if !error.is_timeout() && !error.is_connect() {
@@ -260,15 +259,13 @@ fn fetch_minimax_payload_blocking(
                 match fetch_minimax_payload_curl(api_key, timeout_ms) {
                     Ok(payload) => {
                         log::info!("MiniMax request recovered through system curl fallback");
-                        return Ok(payload);
+                        Ok(payload)
                     }
-                    Err(curl_error) => {
-                        return Err(format!(
-                            "{}; system curl fallback failed: {}",
-                            reqwest_error, curl_error
-                        )
-                        .into());
-                    }
+                    Err(curl_error) => Err(format!(
+                        "{}; system curl fallback failed: {}",
+                        reqwest_error, curl_error
+                    )
+                    .into()),
                 }
             }
 
@@ -307,7 +304,7 @@ fn fetch_minimax_payload_curl(
     validate_header_value(api_key)?;
 
     let connect_timeout = seconds_for_curl(CONNECT_TIMEOUT_MS);
-    let max_time_ms = timeout_ms.min(CURL_FALLBACK_MAX_TIME_MS).max(1_000);
+    let max_time_ms = timeout_ms.clamp(1_000, CURL_FALLBACK_MAX_TIME_MS);
     let max_time = seconds_for_curl(max_time_ms);
     let auth_header = format!("Authorization: Bearer {}", api_key.trim());
     let config = format!("header = \"{}\"\n", curl_config_quote_value(&auth_header));

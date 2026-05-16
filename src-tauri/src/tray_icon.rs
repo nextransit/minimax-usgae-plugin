@@ -23,6 +23,7 @@ const COLOR_WHITE: (u8, u8, u8) = (0xFF, 0xFF, 0xFF);
 
 // ---- 像素操作 ----
 
+#[allow(clippy::too_many_arguments)]
 fn set_px(buf: &mut [u8], w: u32, x: u32, y: u32, r: u8, g: u8, b: u8, a: u8) {
     if x < w && y < H32 {
         let idx = ((y * w + x) * 4) as usize;
