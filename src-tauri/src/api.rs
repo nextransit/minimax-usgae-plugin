@@ -271,6 +271,7 @@ fn fetch_minimax_payload_blocking(
 
             #[cfg(not(target_os = "macos"))]
             {
+                #[allow(clippy::needless_return)]
                 return Err(reqwest_error.into());
             }
         }
