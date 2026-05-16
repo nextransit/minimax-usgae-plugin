@@ -16,7 +16,7 @@ pub use commands::*;
 pub use state::{ApiKeyEntry, AppConfig, AppState, ModelDetail, UsageData};
 
 // Re-export for testing
-pub use api_key_store::{save_key_for_entry, load_key_for_entry, delete_key_for_entry};
+pub use api_key_store::{delete_key_for_entry, load_key_for_entry, save_key_for_entry};
 pub use config::{load_config, save_config};
 
 // Include frontend resources directly using include_str!
@@ -131,7 +131,9 @@ async fn refresh_usage_data(
                 if let Some(min_remaining_count) = min_remaining {
                     let key_name = {
                         let config = state.config.lock().unwrap();
-                        config.api_keys.iter()
+                        config
+                            .api_keys
+                            .iter()
                             .find(|e| e.id == key_id)
                             .map(|e| e.name.clone())
                             .unwrap_or_else(|| key_id.clone())

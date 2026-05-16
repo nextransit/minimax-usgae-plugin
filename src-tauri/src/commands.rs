@@ -37,8 +37,7 @@ fn mask_api_key(key: &str) -> String {
 }
 
 fn api_key_view(entry: ApiKeyEntry) -> ApiKeyView {
-    let masked_key = crate::api_key_store::load_key_for_entry(&entry)
-        .map(|key| mask_api_key(&key));
+    let masked_key = crate::api_key_store::load_key_for_entry(&entry).map(|key| mask_api_key(&key));
     ApiKeyView {
         id: entry.id,
         name: entry.name,
@@ -180,7 +179,8 @@ pub fn cmd_mark_first_run_complete(state: State<AppState>) -> Result<(), String>
 
 #[tauri::command]
 pub fn cmd_get_api_keys(state: State<'_, AppState>) -> Vec<ApiKeyView> {
-    state.config
+    state
+        .config
         .lock()
         .unwrap()
         .api_keys
@@ -297,7 +297,7 @@ pub fn cmd_delete_api_key(
     id: String,
 ) -> Result<(), String> {
     log::info!("cmd_delete_api_key called with id: {}", id);
-    
+
     let entry = {
         let config = state.config.lock().unwrap();
         log::info!("Current api_keys count: {}", config.api_keys.len());

@@ -25,7 +25,7 @@ fn test_api_key_entry_fields() {
         created_at: 1234567890,
         is_active: true,
     };
-    
+
     assert_eq!(entry.name, "My API Key");
     assert_eq!(entry.color, "#00d4ff");
     assert_eq!(entry.refresh_interval, 20);
@@ -45,7 +45,7 @@ fn test_api_key_entry_unique_ids() {
         created_at: chrono::Utc::now().timestamp(),
         is_active: true,
     };
-    
+
     let entry2 = ApiKeyEntry {
         id: uuid::Uuid::new_v4().to_string(),
         name: "Key 2".to_string(),
@@ -56,7 +56,7 @@ fn test_api_key_entry_unique_ids() {
         created_at: chrono::Utc::now().timestamp(),
         is_active: true,
     };
-    
+
     assert_ne!(entry1.id, entry2.id);
     assert_ne!(entry1.keychain_account, entry2.keychain_account);
     assert_ne!(entry1.color, entry2.color);
@@ -75,11 +75,11 @@ fn test_api_key_entry_serialization() {
         created_at: 1234567890,
         is_active: true,
     };
-    
+
     let json = serde_json::to_string(&entry).expect("Should serialize");
     assert!(json.contains("test-id"));
     assert!(json.contains("Test Key"));
-    
+
     let loaded: ApiKeyEntry = serde_json::from_str(&json).expect("Should deserialize");
     assert_eq!(loaded.id, entry.id);
     assert_eq!(loaded.name, entry.name);
@@ -91,7 +91,7 @@ fn test_api_key_entry_serialization() {
 #[test]
 fn test_multiple_entries_in_vec() {
     let mut entries = Vec::new();
-    
+
     for i in 1..=3 {
         entries.push(ApiKeyEntry {
             id: uuid::Uuid::new_v4().to_string(),
@@ -104,14 +104,14 @@ fn test_multiple_entries_in_vec() {
             is_active: true,
         });
     }
-    
+
     assert_eq!(entries.len(), 3);
-    
+
     let find_id = &entries[1].id;
     let found = entries.iter().find(|e| &e.id == find_id);
     assert!(found.is_some());
     assert_eq!(found.unwrap().name, "Key 2");
-    
+
     entries.retain(|e| e.name != "Key 2");
     assert_eq!(entries.len(), 2);
     assert!(entries.iter().all(|e| e.name != "Key 2"));

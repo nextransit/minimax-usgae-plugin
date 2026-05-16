@@ -72,7 +72,11 @@ pub fn load_config() -> Result<AppConfig, Box<dyn std::error::Error>> {
             return Ok(config);
         }
         Err(e) => {
-            log::warn!("Failed to parse v2 config ({}): {}", e, &content[..content.len().min(200)]);
+            log::warn!(
+                "Failed to parse v2 config ({}): {}",
+                e,
+                &content[..content.len().min(200)]
+            );
         }
     }
 

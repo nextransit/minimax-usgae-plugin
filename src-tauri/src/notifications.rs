@@ -2,18 +2,13 @@ use tauri::{AppHandle, Manager};
 use tauri_plugin_notification::NotificationExt;
 
 /// Check remaining count and send notification if threshold is reached.
-/// 
+///
 /// # Arguments
 /// * `app` - Tauri app handle
 /// * `key_id` - The API key ID (for deduplication/filtering in future)
 /// * `key_name` - Display name of the API key
 /// * `min_remaining_count` - Minimum remaining request count across all models
-pub fn check_and_notify(
-    app: &AppHandle,
-    key_id: &str,
-    key_name: &str,
-    min_remaining_count: i64,
-) {
+pub fn check_and_notify(app: &AppHandle, key_id: &str, key_name: &str, min_remaining_count: i64) {
     let state = app.state::<crate::state::AppState>();
     let config = state.config.lock().unwrap();
 

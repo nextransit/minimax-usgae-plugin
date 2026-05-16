@@ -14,11 +14,11 @@ const W16: u32 = 16;
 const H16: u32 = 16;
 
 // 状态色
-const COLOR_NORMAL: (u8, u8, u8) = (0x00, 0xBF, 0xFF);    // 青色
-const COLOR_WARNING: (u8, u8, u8) = (0xFF, 0x8C, 0x00);    // 橙色
-const COLOR_CRITICAL: (u8, u8, u8) = (0xFF, 0x44, 0x44);   // 红色
-const COLOR_ERROR: (u8, u8, u8) = (0xFF, 0x00, 0xFF);      // 品红
-const COLOR_OFFLINE: (u8, u8, u8) = (0x66, 0x66, 0x66);    // 灰色
+const COLOR_NORMAL: (u8, u8, u8) = (0x00, 0xBF, 0xFF); // 青色
+const COLOR_WARNING: (u8, u8, u8) = (0xFF, 0x8C, 0x00); // 橙色
+const COLOR_CRITICAL: (u8, u8, u8) = (0xFF, 0x44, 0x44); // 红色
+const COLOR_ERROR: (u8, u8, u8) = (0xFF, 0x00, 0xFF); // 品红
+const COLOR_OFFLINE: (u8, u8, u8) = (0x66, 0x66, 0x66); // 灰色
 const COLOR_WHITE: (u8, u8, u8) = (0xFF, 0xFF, 0xFF);
 
 // ---- 像素操作 ----
@@ -49,7 +49,12 @@ pub fn status_color(used_percent: Option<f64>, ok: bool) -> (u8, u8, u8) {
 // ---- 抗锯齿圆角矩形 ----
 
 fn rounded_rect_coverage(x: f64, y: f64, w: f64, h: f64, r: f64) -> f64 {
-    let corners = [(r, r), (w - r - 1.0, r), (r, h - r - 1.0), (w - r - 1.0, h - r - 1.0)];
+    let corners = [
+        (r, r),
+        (w - r - 1.0, r),
+        (r, h - r - 1.0),
+        (w - r - 1.0, h - r - 1.0),
+    ];
 
     // 主体区域
     if x >= r && x < w - r && y >= 0.0 && y < h {
@@ -94,18 +99,78 @@ fn fill_rounded_rect_aa(buf: &mut [u8], w: u32, h: u32, color: (u8, u8, u8), rad
 // ---- 5x7 像素字体 ----
 
 const FONT_5X7: &[(&[u8; 7], char)] = &[
-    (&[0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110], '0'),
-    (&[0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b11111], '1'),
-    (&[0b01110, 0b10001, 0b00001, 0b00110, 0b01000, 0b10000, 0b11111], '2'),
-    (&[0b01110, 0b10001, 0b00001, 0b00110, 0b00001, 0b10001, 0b01110], '3'),
-    (&[0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010], '4'),
-    (&[0b11111, 0b10000, 0b11110, 0b00001, 0b00001, 0b10001, 0b01110], '5'),
-    (&[0b01110, 0b10001, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110], '6'),
-    (&[0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000], '7'),
-    (&[0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110], '8'),
-    (&[0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b10001, 0b01110], '9'),
-    (&[0b10001, 0b11011, 0b10101, 0b10101, 0b10001, 0b10001, 0b10001], 'M'),
-    (&[0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00000, 0b00100], '!'),
+    (
+        &[
+            0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110,
+        ],
+        '0',
+    ),
+    (
+        &[
+            0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b11111,
+        ],
+        '1',
+    ),
+    (
+        &[
+            0b01110, 0b10001, 0b00001, 0b00110, 0b01000, 0b10000, 0b11111,
+        ],
+        '2',
+    ),
+    (
+        &[
+            0b01110, 0b10001, 0b00001, 0b00110, 0b00001, 0b10001, 0b01110,
+        ],
+        '3',
+    ),
+    (
+        &[
+            0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010,
+        ],
+        '4',
+    ),
+    (
+        &[
+            0b11111, 0b10000, 0b11110, 0b00001, 0b00001, 0b10001, 0b01110,
+        ],
+        '5',
+    ),
+    (
+        &[
+            0b01110, 0b10001, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110,
+        ],
+        '6',
+    ),
+    (
+        &[
+            0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000,
+        ],
+        '7',
+    ),
+    (
+        &[
+            0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110,
+        ],
+        '8',
+    ),
+    (
+        &[
+            0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b10001, 0b01110,
+        ],
+        '9',
+    ),
+    (
+        &[
+            0b10001, 0b11011, 0b10101, 0b10101, 0b10001, 0b10001, 0b10001,
+        ],
+        'M',
+    ),
+    (
+        &[
+            0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00000, 0b00100,
+        ],
+        '!',
+    ),
 ];
 
 fn draw_char(buf: &mut [u8], w: u32, ch: u8, color: (u8, u8, u8), size: u32, ox: u32, oy: u32) {
@@ -142,7 +207,15 @@ fn draw_char(buf: &mut [u8], w: u32, ch: u8, color: (u8, u8, u8), size: u32, ox:
 
 fn draw_number(buf: &mut [u8], w: u32, s: &str, color: (u8, u8, u8), size: u32, ox: u32, oy: u32) {
     for (i, ch) in s.chars().enumerate() {
-        draw_char(buf, w, ch as u8, color, size, ox + (i as u32) * (size + 2), oy);
+        draw_char(
+            buf,
+            w,
+            ch as u8,
+            color,
+            size,
+            ox + (i as u32) * (size + 2),
+            oy,
+        );
     }
 }
 
@@ -231,7 +304,11 @@ pub fn render_gauge_icon(used_percent: Option<f64>, ok: bool) -> Image<'static> 
             let dy = y as f64 - cy;
             let dist = (dx * dx + dy * dy).sqrt();
             let angle = dy.atan2(dx);
-            let mut norm_angle = if angle < start_angle { angle + 2.0 * PI } else { angle };
+            let mut norm_angle = if angle < start_angle {
+                angle + 2.0 * PI
+            } else {
+                angle
+            };
             // 将角度映射为从顶部顺时针
             let progress_angle = (norm_angle - start_angle) % (2.0 * PI);
 
@@ -288,7 +365,13 @@ pub fn render_tray_icon(style: &str, used_percent: Option<f64>, ok: bool) -> Ima
 
 // ---- 线框绘制辅助 ----
 
-fn draw_line(buf: &mut [u8], (x0, y0): (i32, i32), (x1, y1): (i32, i32), color: (u8, u8, u8), thickness: i32) {
+fn draw_line(
+    buf: &mut [u8],
+    (x0, y0): (i32, i32),
+    (x1, y1): (i32, i32),
+    color: (u8, u8, u8),
+    thickness: i32,
+) {
     let (cr, cg, cb) = color;
     let dx = (x1 - x0).abs();
     let dy = -(y1 - y0).abs();
@@ -311,10 +394,18 @@ fn draw_line(buf: &mut [u8], (x0, y0): (i32, i32), (x1, y1): (i32, i32), color: 
                 }
             }
         }
-        if x == x1 && y == y1 { break; }
+        if x == x1 && y == y1 {
+            break;
+        }
         let e2 = 2 * err;
-        if e2 >= dy { err += dy; x += sx; }
-        if e2 <= dx { err += dx; y += sy; }
+        if e2 >= dy {
+            err += dy;
+            x += sx;
+        }
+        if e2 <= dx {
+            err += dx;
+            y += sy;
+        }
     }
 }
 
