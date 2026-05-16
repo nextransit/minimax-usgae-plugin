@@ -51,13 +51,13 @@ jobs:
           components: clippy,rustfmt
 
       - name: Check formatting
-        run: cargo fmt --check
+        run: cargo fmt --check --manifest-path src-tauri/Cargo.toml
 
       - name: Clippy lints
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
 
       - name: Run tests
-        run: cargo test --lib
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
 
   # macOS 多架构构建
   build-macos:
