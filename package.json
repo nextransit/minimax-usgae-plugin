@@ -3,7 +3,7 @@
   "displayName": "%extension.displayName%",
   "description": "%extension.description%",
   "icon": "images/icon.png",
-  "version": "0.0.9",
+  "version": "0.0.10",
   "publisher": "decard",
   "license": "MIT",
   "repository": {
@@ -139,12 +139,24 @@
           "items": {
             "type": "object",
             "properties": {
-              "id": { "type": "string" },
-              "name": { "type": "string" },
-              "color": { "type": "string" },
-              "refreshInterval": { "type": "number" },
-              "createdAt": { "type": "number" },
-              "isActive": { "type": "boolean" }
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "color": {
+                "type": "string"
+              },
+              "refreshInterval": {
+                "type": "number"
+              },
+              "createdAt": {
+                "type": "number"
+              },
+              "isActive": {
+                "type": "boolean"
+              }
             }
           }
         },
