@@ -105,12 +105,15 @@ jobs:
         include:
           - os: macos-14
             arch: arm64
+            rust_targets: aarch64-apple-darwin
             target: aarch64-apple-darwin
           - os: macos-latest
             arch: x86_64
+            rust_targets: x86_64-apple-darwin
             target: x86_64-apple-darwin
           - os: macos-latest
             arch: universal
+            rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
             target: universal-apple-darwin
 
     steps:
@@ -126,7 +129,7 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: ${{ matrix.rust_targets }}
 
       - name: Install Node dependencies
         run: npm ci
@@ -146,6 +149,8 @@ jobs:
           path: |
             src-tauri/target/release/bundle/dmg/*.dmg
             src-tauri/target/release/bundle/macos/*.app
+            src-tauri/target/*/release/bundle/dmg/*.dmg
+            src-tauri/target/*/release/bundle/macos/*.app
           if-no-files-found: error
 
   # Linux 多架构构建
