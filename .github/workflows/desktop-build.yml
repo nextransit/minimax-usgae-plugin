@@ -50,6 +50,40 @@ jobs:
           targets: ${{ matrix.targets }}
           components: clippy,rustfmt
 
+      - name: Install Linux desktop dependencies
+        if: matrix.os == 'ubuntu-24.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libdbus-1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libgtk-3-dev \
+            libglib2.0-dev \
+            libgdk-pixbuf2.0-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            pkg-config
+
+      - name: Configure Linux pkg-config
+        if: matrix.os == 'ubuntu-24.04'
+        run: |
+          glib_pc="$(find /usr -name 'glib-2.0.pc' -print -quit)"
+          if [ -z "$glib_pc" ]; then
+            echo "glib-2.0.pc not found"
+            exit 1
+          fi
+          pkg_config_path="$(dirname "$glib_pc"):/usr/lib/pkgconfig:/usr/share/pkgconfig"
+          {
+            echo "PKG_CONFIG_PATH=${pkg_config_path}"
+            echo "PKG_CONFIG_ALLOW_SYSTEM_CFLAGS=1"
+          } >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=${pkg_config_path}"
+          find /usr -name 'glib-2.0.pc' -print
+          pkg-config --modversion glib-2.0
+          pkg-config --modversion gtk+-3.0
+          pkg-config --modversion webkit2gtk-4.1
+
       - name: Check formatting
         run: cargo fmt --check --manifest-path src-tauri/Cargo.toml
 
@@ -64,6 +98,7 @@ jobs:
     name: Build macOS (${{ matrix.arch }})
     needs: code-quality
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
@@ -124,10 +159,8 @@ jobs:
         include:
           - os: ubuntu-24.04
             arch: x86_64
-            target: ""
-          - os: ubuntu-24.04
+          - os: ubuntu-24.04-arm
             arch: arm64
-            target: "--target aarch64-unknown-linux-gnu"
 
     steps:
       - name: Checkout
@@ -141,33 +174,46 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.arch == 'arm64' && 'aarch64-unknown-linux-gnu' || '' }}
 
       - name: Install Linux desktop dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
+          sudo apt-get install -y --no-install-recommends \
             libdbus-1-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
             libgtk-3-dev \
-            libglib2.0-dev \
             libglib2.0-dev \
             libgdk-pixbuf2.0-dev \
             libssl-dev \
             libwebkit2gtk-4.1-dev \
             patchelf \
             pkg-config \
-            rpm \
-            gcc-aarch64-linux-gnu \
-            libc6-dev-arm64-cross
+            rpm
+
+      - name: Configure Linux pkg-config
+        run: |
+          glib_pc="$(find /usr -name 'glib-2.0.pc' -print -quit)"
+          if [ -z "$glib_pc" ]; then
+            echo "glib-2.0.pc not found"
+            exit 1
+          fi
+          pkg_config_path="$(dirname "$glib_pc"):/usr/lib/pkgconfig:/usr/share/pkgconfig"
+          {
+            echo "PKG_CONFIG_PATH=${pkg_config_path}"
+            echo "PKG_CONFIG_ALLOW_SYSTEM_CFLAGS=1"
+          } >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=${pkg_config_path}"
+          find /usr -name 'glib-2.0.pc' -print
+          pkg-config --modversion glib-2.0
+          pkg-config --modversion gtk+-3.0
+          pkg-config --modversion webkit2gtk-4.1
 
       - name: Install Node dependencies
         run: npm ci
 
       - name: Build Tauri app
-        run: npm run tauri:build:ci ${{ matrix.target }}
+        run: npm run tauri:build:ci
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
