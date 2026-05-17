@@ -1,85 +1,106 @@
-# MiniMax Usage StatusBar (VS Code)
+# MiniMax Usage Monitor
 
 <p align="center">
   <img src="./images/icon.png" width="128" />
 </p>
 
-基于 [Eyozy/minimax-usage](https://github.com/Eyozy/minimax-usage) 的 MiniMax Token Plan 用量查询逻辑，封装成 VS Code 插件，并在状态栏展示详细信息。
+基于 MiniMax Token Plan API 的用量监控插件，支持 VS Code 和独立桌面应用。
 
-## 功能
+## ⚠️ 隐私声明
 
-- 状态栏显示当前窗口用量（已用/总额/百分比）
-- 状态栏按用量阈值自动显示不同颜色（正常/预警/高风险）
-- 可选显示本周用量进度
-- Hover 展示详细信息：状态、时间窗口、重置倒计时、模型明细
-- 点击状态栏弹出三行彩色详情面板（含进度条）：
-  - 已使用/剩余/总额度/窗口重置
-  - 本周已使用/本周剩余/本周总额度/本周重置
-  - 本周使用进度 xxx%
-- 命令支持：
-  - `MiniMax Usage: Show Details`
-  - `MiniMax Usage: Set API Key`
-  - `MiniMax Usage: Clear API Key`
-  - `MiniMax Usage: Refresh`
-  - `MiniMax Usage: Copy Raw Response`
-- API Key 使用 VS Code Secret Storage 保存
+**本插件仅用于显示 API Key 的用量信息。您的 API Key 通过 VS Code Secret Storage / 操作系统 Keychain 本地安全存储，不会传输到除 MiniMax 官方 API 之外的任何服务器。**
 
-## 快速开始
+## ✨ 功能特点
 
-1. 在本目录执行：
-   ```bash
-   npm install
-   npm run compile
-   ```
-2. 用 VS Code 打开本目录
-3. 按 `F5` 启动 Extension Development Host
-4. 在命令面板运行 `MiniMax Usage: Set API Key`
-5. 状态栏查看结果（点击可刷新）
+### 🔑 多 API Key 管理
+- 支持同时管理多个 API Key
+- 一键切换查看不同 Key 的用量
+- 独立一行胶囊按钮设计：`ALL` / `Key1` / `Key2` / ...
+- 实时汇总显示所有 Key 的总用量
 
-## 打包说明
+### 🖱️ 智能悬停预览
+- 状态栏悬停显示快速预览
+- 按 Key 显示：已用 / 剩余 / 百分比
+- 高亮显示用量异常 Key
 
-如果需要导出为 `.vsix` 文件进行发布或本地安装：
+### 💻 桌面版支持
+- 独立 Tauri 桌面应用
+- 支持 macOS / Windows / Linux
+- 原生系统托盘运行
+- 启动时自动后台刷新
 
-1. 确保已安装编译环境：
-   ```bash
-   npm run compile
-   ```
-2. 执行打包命令：
-   ```bash
-   # 使用 package.json 中配置好的 script
-   npm run package
-   ```
-3. 打包完成后，在该目录下会生成一个 `minimax-usage-statusbar-x.x.x.vsix` 文件。
-4. **手动安装**：在 VS Code 插件面板点击 `...` -> `Install from VSIX...`，选择该文件即可。
+### 📊 可视化面板
+- 当前周期用量进度
+- 本周累计用量进度
+- 模型明细表格展开
+- 风险预警提示
 
-## 独立桌面应用
+## 📦 安装
 
-仓库同时包含 Tauri 独立桌面应用：
+### VS Code 插件安装
 
-- 后端：`src-tauri/`
-- 前端：`src-web/`
-- 跨平台构建说明：`docs/desktop-cross-platform-build.md`
+**方式一：VS Code 市场（推荐）**
+1. 打开 VS Code
+2. 搜索 `MiniMax Usage`
+3. 点击安装
 
-常用命令：
+**方式二：Open-VSX 市场**
+- [open-vsx.org](https://open-vsx.org/extension/decard/minimax-usage-statusbar)
 
-```bash
-npm ci
-npm run tauri:dev
-npm run tauri:build
-```
+**方式三：手动安装 VSIX**
+1. 下载最新 `.vsix` 文件
+2. VS Code 中 `Ctrl/Cmd + P` → `Extension: Install from VSIX...`
 
-GitHub Actions 会在 macOS、Linux、Windows 三个平台分别构建桌面安装包，并上传 workflow artifacts。
+### 桌面版安装
 
-## 配置项
+| 平台 | 下载链接 |
+|------|----------|
+| macOS (Apple Silicon) | GitHub Release 下载 `.dmg` |
+| macOS (Intel) | GitHub Release 下载 `.dmg` |
+| Windows | GitHub Release 下载 `.exe` 安装包 |
+| Linux | GitHub Release 下载 `.AppImage` / `.deb` / `.rpm` |
 
-- `minimaxUsage.refreshIntervalSeconds`: 自动刷新间隔（秒）
-- `minimaxUsage.showWeeklyInStatusBar`: 状态栏文本是否展示本周进度
-- `minimaxUsage.detailModelLimit`: Tooltip 中展示的模型明细条数
-- `minimaxUsage.statusBarAlignment`: 状态栏位置（left/right）
-- `minimaxUsage.requestTimeoutMs`: 请求超时（毫秒）
+> 📌 [点击访问 GitHub Release 页面](https://github.com/nextransit/minimax-usage-plugin/releases/latest)
 
-## 说明
+## ⚙️ 配置步骤
 
-- 查询接口：`GET https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains`
-- 数据字段含义与参考项目保持一致
-- 倒计时每秒更新，查询结果按配置自动刷新
+### VS Code 插件
+
+1. **安装插件后**，按 `Ctrl/Cmd + Shift + P`
+2. 输入并选择 `MiniMax Usage: Set API Key`
+3. 输入您的 MiniMax API Key
+4. 按 `Enter` 确认
+
+### 桌面版
+
+1. 下载并安装对应平台的安装包
+2. 首次启动会提示输入 API Key
+3. 支持多 Key 管理，点击托盘图标查看详情
+
+## 📋 配置项
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| `minimaxUsage.refreshIntervalSeconds` | `60` | 自动刷新间隔（秒） |
+| `minimaxUsage.showWeeklyInStatusBar` | `true` | 状态栏显示本周进度 |
+| `minimaxUsage.detailModelLimit` | `5` | 模型明细展示条数 |
+| `minimaxUsage.statusBarAlignment` | `right` | 状态栏位置 |
+| `minimaxUsage.requestTimeoutMs` | `10000` | 请求超时（毫秒） |
+
+## ⌨️ 命令
+
+| 命令 | 说明 |
+|------|------|
+| `MiniMax Usage: Show Details` | 打开详情面板 |
+| `MiniMax Usage: Set API Key` | 设置 API Key |
+| `MiniMax Usage: Add API Key` | 添加多个 Key |
+| `MiniMax Usage: Refresh` | 立即刷新 |
+| `MiniMax Usage: Clear API Key` | 清除所有 Key |
+
+## 📄 License
+
+MIT License - 详见 [LICENSE](./LICENSE) 文件
+
+## 🙏 致谢
+
+基于 [Eyozy/minimax-usage](https://github.com/Eyozy/minimax-usage) 的 MiniMax Token Plan 用量查询逻辑。
