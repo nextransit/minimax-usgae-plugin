@@ -36,6 +36,17 @@ jobs:
         run: npx @vscode/vsce publish -p ${{ secrets.VSCE_PAT }}
         continue-on-error: true
 
+      - name: Switch publisher to benpay for Open-VSX
+        run: |
+          cp package.json package.json.bak
+          jq '.publisher = "benpay"' package.json > package.json.tmp && mv package.json.tmp package.json
+
+      - name: Package for Open-VSX
+        run: npx @vscode/vsce package -o minimax-openvsx.vsix
+
       - name: Publish to Open-VSX
-        run: npx ovsx publish -p ${{ secrets.OVSX_PAT }}
+        run: npx ovsx publish minimax-openvsx.vsix -p ${{ secrets.OVSX_PAT }}
         continue-on-error: true
+
+      - name: Restore publisher
+        run: mv package.json.bak package.json
