@@ -115,6 +115,7 @@ let latestRawResponse: unknown = null;
 let lastUpdatedAt: Date | null = null;
 let isRefreshing = false;
 let hasAlertedHighRisk = false;
+let hasAlertedHighRiskWeekly = false;
 let detailsPanel: vscode.WebviewPanel | undefined;
 const emptyUsageViewModel = {
   primaryModelName: "",
@@ -170,6 +171,14 @@ function getRuntimeStrings(config: ExtensionConfig = readConfig()) {
       isEn
         ? " requests left. Consider lowering request frequency or switching models."
         : " 次，即将耗尽！建议降低请求频率或切换模型。",
+    warnRiskLowQuotaWeekly:
+      isEn
+        ? "MiniMax weekly warning: only "
+        : "MiniMax 每周风险提示: 本周最小剩余请求次数仅 ",
+    warnRiskLowQuotaWeeklySuffix:
+      isEn
+        ? " requests left this week. Consider lowering request frequency or switching models."
+        : " 次，本周即将耗尽！建议降低请求频率或切换模型。",
     errorQueryFailedPrefix: isEn ? "MiniMax query failed: " : "MiniMax 查询失败：",
     errorQueryExceptionPrefix: isEn ? "MiniMax query error: " : "MiniMax 查询异常：",
     errorUnknown: isEn ? "Unknown error" : "未知错误",
@@ -725,16 +734,35 @@ async function refreshUsageForKey(keyId: string, reason: "startup" | "auto" | "m
 
     log(`refresh key [${keyId}] [${reason}] ok=${result.ok} status=${result.statusCode ?? "N/A"}`);
 
-    // High-risk popup
-    if (result.ok && vm.minRemainingCount !== null && vm.minRemainingCount <= 5) {
-      if (!hasAlertedHighRisk) {
-        void vscode.window.showWarningMessage(
-          `${strings.warnRiskLowQuota}${vm.minRemainingCount}${strings.warnRiskLowQuotaSuffix}`,
-        );
-        hasAlertedHighRisk = true;
+    // High-risk popup — check current interval and weekly separately
+    // to avoid false alarms when only one window is low.
+    if (result.ok) {
+      const currentRemaining = vm.remainingCount;
+      const weeklyRemaining = vm.weeklyRemainingCount;
+
+      // Current interval alert (primary model)
+      if (currentRemaining !== null && currentRemaining <= 5) {
+        if (!hasAlertedHighRisk) {
+          void vscode.window.showWarningMessage(
+            `${strings.warnRiskLowQuota}${currentRemaining}${strings.warnRiskLowQuotaSuffix}`,
+          );
+          hasAlertedHighRisk = true;
+        }
+      } else {
+        hasAlertedHighRisk = false;
       }
-    } else {
-      hasAlertedHighRisk = false;
+
+      // Weekly alert
+      if (weeklyRemaining !== null && weeklyRemaining <= 5) {
+        if (!hasAlertedHighRiskWeekly) {
+          void vscode.window.showWarningMessage(
+            `${strings.warnRiskLowQuotaWeekly}${weeklyRemaining}${strings.warnRiskLowQuotaWeeklySuffix}`,
+          );
+          hasAlertedHighRiskWeekly = true;
+        }
+      } else {
+        hasAlertedHighRiskWeekly = false;
+      }
     }
 
     if (!result.ok && reason === "manual") {
