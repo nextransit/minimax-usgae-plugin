@@ -3,6 +3,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_autostart::ManagerExt;
+use tauri_plugin_updater::UpdaterExt;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ApiKeyView {
@@ -502,6 +503,48 @@ pub async fn cmd_refresh_all_usage_data(
         return Err(format!("All usage refreshes failed: {}", summary));
     }
     Ok(usage)
+}
+
+#[tauri::command]
+pub async fn cmd_check_update(app: AppHandle) -> Result<String, String> {
+    let updater = app
+        .updater()
+        .map_err(|e| e.to_string())?;
+
+    let update = updater
+        .check()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    match update {
+        Some(update) => {
+            let version = update.version.clone();
+            log::info!(
+                "Manual update check: found new version v{}, downloading...",
+                version
+            );
+            // Background download, don't block response
+            let version_for_log = version.clone();
+            tauri::async_runtime::spawn(async move {
+                match update.download_and_install(|_chunk, _total| {}, || {}).await {
+                    Ok(_) => {
+                        log::info!(
+                            "Manual update: v{} downloaded, will install on next restart",
+                            version_for_log
+                        );
+                    }
+                    Err(e) => {
+                        log::warn!("Manual update: download failed: {}", e);
+                    }
+                }
+            });
+            Ok(version)
+        }
+        None => {
+            log::info!("Manual update check: already on latest version");
+            Ok("none".into())
+        }
+    }
 }
 
 #[cfg(test)]

@@ -129,6 +129,7 @@ pub(crate) struct TrayI18n {
     clear_key: &'static str,
     refresh: &'static str,
     show_percent_toggle: &'static str,
+    check_update: &'static str,
     model_prefix: &'static str,
     interval_prefix: &'static str,
     remaining_prefix: &'static str,
@@ -147,6 +148,7 @@ fn tray_i18n(language: &str) -> TrayI18n {
             clear_key: "清除 API Key",
             refresh: "立即刷新",
             show_percent_toggle: "在托盘栏显示使用比例",
+            check_update: "检查更新...",
             model_prefix: "模型",
             interval_prefix: "周期",
             remaining_prefix: "剩余",
@@ -163,6 +165,7 @@ fn tray_i18n(language: &str) -> TrayI18n {
             clear_key: "Clear API Key",
             refresh: "Refresh Now",
             show_percent_toggle: "Show Usage Percent in Tray",
+            check_update: "Check for Updates...",
             model_prefix: "Model",
             interval_prefix: "Interval",
             remaining_prefix: "Remaining",
@@ -415,6 +418,8 @@ pub fn update_tray_menu(app: &AppHandle, state: &AppState) {
     let set_key = MenuItem::with_id(app, "set_key", i18n.set_key, true, None::<&str>).unwrap();
     let clear_key =
         MenuItem::with_id(app, "clear_key", i18n.clear_key, true, None::<&str>).unwrap();
+    let check_update =
+        MenuItem::with_id(app, "check_update", i18n.check_update, true, None::<&str>).unwrap();
     let refresh = MenuItem::with_id(app, "refresh", i18n.refresh, true, None::<&str>).unwrap();
     let toggle_show_percent = CheckMenuItem::with_id(
         app,
@@ -434,6 +439,10 @@ pub fn update_tray_menu(app: &AppHandle, state: &AppState) {
         Box::new(set_key),
         Box::new(clear_key),
     ];
+
+    // Insert check_update before the final quit section
+    items.push(Box::new(PredefinedMenuItem::separator(app).unwrap()));
+    items.push(Box::new(check_update));
 
     if let Some(data) = primary_usage {
         if data.ok {
@@ -587,6 +596,8 @@ pub fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
         MenuItem::with_id(&app_handle, "set_key", i18n.set_key, true, None::<&str>).unwrap();
     let clear_key_item =
         MenuItem::with_id(&app_handle, "clear_key", i18n.clear_key, true, None::<&str>).unwrap();
+    let check_update_item =
+        MenuItem::with_id(&app_handle, "check_update", i18n.check_update, true, None::<&str>).unwrap();
     let quit_item = MenuItem::with_id(&app_handle, "quit", i18n.quit, true, None::<&str>).unwrap();
 
     let menu = Menu::with_items(
@@ -605,6 +616,8 @@ pub fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
             &toggle_item,
             &set_key_item,
             &clear_key_item,
+            &PredefinedMenuItem::separator(&app_handle).unwrap(),
+            &check_update_item,
             &PredefinedMenuItem::separator(&app_handle).unwrap(),
             &quit_item,
         ],
@@ -691,6 +704,26 @@ pub fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                     if let Err(e) = crate::commands::cmd_clear_api_key(app.clone(), state) {
                         log::error!("Failed to clear API key from tray action: {}", e);
                     }
+                }
+                "check_update" => {
+                    let app_h = app.clone();
+                    tauri::async_runtime::spawn(async move {
+                        match crate::commands::cmd_check_update(app_h).await {
+                            Ok(version) => {
+                                if version == "none" {
+                                    log::info!("Manual update check: already on latest version");
+                                } else {
+                                    log::info!(
+                                        "Manual update check: downloading v{} in background",
+                                        version
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                log::warn!("Manual update check failed: {}", e);
+                            }
+                        }
+                    });
                 }
                 "toggle_show_percent" => {
                     let state: State<AppState> = app.state();

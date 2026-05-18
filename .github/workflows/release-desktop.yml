@@ -162,3 +162,11 @@ jobs:
           draft: false
           prerelease: false
           files: artifacts/**/*
+
+      - name: Generate update.json
+        run: node scripts/generate-update-json.js
+
+      - name: Upload update.json to Release
+        run: gh release upload ${{ github.ref_name }} update.json --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}

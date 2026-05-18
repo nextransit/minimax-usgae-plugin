@@ -11,6 +11,7 @@ mod tray_icon;
 mod linux_fix;
 
 use tauri::{AppHandle, Emitter, Manager};
+use tauri_plugin_updater::UpdaterExt;
 
 pub use commands::*;
 pub use state::{ApiKeyEntry, AppConfig, AppState, ModelDetail, UsageData};
@@ -248,6 +249,7 @@ pub fn run() {
             Some(vec!["--minimized"]),
         ))
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(app_state);
 
     // Single-instance 插件仅在桌面平台启用
@@ -329,6 +331,42 @@ pub fn run() {
 
             spawn_usage_refresh_loop(app_handle.clone());
 
+            // Auto-update: check for updates on startup (silent)
+            {
+                let update_handle = app_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    let Ok(updater) = update_handle.updater() else {
+                        log::warn!("Auto-update: failed to init updater");
+                        return;
+                    };
+                    match updater.check().await {
+                        Ok(Some(update)) => {
+                            log::info!(
+                                "Auto-update: found new version v{}, downloading...",
+                                update.version
+                            );
+                            match update.download_and_install(|_chunk, _total| {}, || {}).await {
+                                Ok(_) => {
+                                    log::info!(
+                                        "Auto-update: v{} downloaded, will install on next restart",
+                                        update.version
+                                    );
+                                }
+                                Err(e) => {
+                                    log::warn!("Auto-update: download failed: {}", e);
+                                }
+                            }
+                        }
+                        Ok(None) => {
+                            log::info!("Auto-update: already on latest version");
+                        }
+                        Err(e) => {
+                            log::warn!("Auto-update: check failed: {}", e);
+                        }
+                    }
+                });
+            }
+
             let initial_config = saved_config.clone();
             let initial_api_key = api_key_for_fetch.clone();
             tauri::async_runtime::spawn(async move {
@@ -380,6 +418,7 @@ pub fn run() {
             cmd_get_usage_for_key,
             cmd_get_all_usage_data,
             cmd_refresh_all_usage_data,
+            cmd_check_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
