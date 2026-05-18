@@ -169,6 +169,12 @@ function getRuntimeStrings(config: ExtensionConfig = readConfig()) {
     infoApiKeySaved: isEn ? "MiniMax API key saved" : "MiniMax API Key 已保存",
     infoApiKeyCleared: isEn ? "MiniMax API key cleared" : "MiniMax API Key 已清除",
     infoRawCopied: isEn ? "MiniMax raw response copied to clipboard" : "MiniMax 原始响应已复制到剪贴板",
+    welcomeTitle:
+      isEn
+        ? "Welcome to MiniMax Usage Monitor! Configure your access token to get started. Multiple API keys are supported."
+        : "欢迎使用 MiniMax Usage Monitor！需要配置您的访问令牌才能开始使用。可以设置多个 API KEY。",
+    welcomeConfigure: isEn ? "Configure Now" : "立即配置",
+    welcomeLater: isEn ? "Later" : "稍后设置",
     warnNoRawResponse: isEn ? "There is no raw response to copy yet" : "当前没有可复制的原始响应",
     warnSetApiKeyFirst: isEn ? "Please run \"MiniMax Usage: Set API Key\" first" : "请先运行 “MiniMax Usage: Set API Key”",
     warnRiskLowQuota:
@@ -319,6 +325,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Initialize multi-key support
   secretStore = new SecretStore(context.secrets);
   await loadMultiKeyState();
+
+  // Welcome prompt when no API keys are configured
+  await showWelcomeIfNoKeys();
 
   registerCommands(context);
 
@@ -1368,6 +1377,26 @@ async function loadMultiKeyState(): Promise<void> {
   multiKeyState.setApiKeys(keys);
   multiKeyState.selectedKeyId = selectedId;
   log(`loaded ${keys.length} keys, selected=${selectedId}`);
+}
+
+// Show welcome prompt when no API keys are configured (once per session)
+let hasShownWelcome = false;
+async function showWelcomeIfNoKeys(): Promise<void> {
+  if (hasShownWelcome) return;
+  if (multiKeyState.visibleKeys.length > 0) return;
+
+  hasShownWelcome = true;
+  const strings = getRuntimeStrings();
+  const choice = await vscode.window.showInformationMessage(
+    strings.welcomeTitle,
+    { modal: false },
+    strings.welcomeConfigure,
+    strings.welcomeLater,
+  );
+
+  if (choice === strings.welcomeConfigure) {
+    await vscode.commands.executeCommand("minimaxUsage.addApiKey");
+  }
 }
 
 // Save API keys to config
