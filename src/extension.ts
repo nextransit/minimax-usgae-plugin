@@ -326,13 +326,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   secretStore = new SecretStore(context.secrets);
   await loadMultiKeyState();
 
-  // Welcome prompt when no API keys are configured
-  // Fire-and-forget with a slight delay to let VS Code finish initialization
-  setTimeout(() => {
-    showWelcomeIfNoKeys();
-  }, 1000);
-
   registerCommands(context);
+
+  // Welcome prompt when no API keys are configured
+  // Fire-and-forget — don't block activate()
+  showWelcomeIfNoKeys();
 
   // Load keys from config
 
@@ -885,7 +883,7 @@ function updateStatusBar(): void {
       basePriority,
       `${selectCompactStateIcon("missingKey")} ${strings.statusSetApiKeyCompact}`,
       buildMissingKeyTooltip(),
-      "minimaxUsage.addApiKey",
+      "minimaxUsage.showDetails",
       new vscode.ThemeColor("statusBarItem.warningForeground"),
     );
     renderStatusItems(specs);
@@ -1384,22 +1382,25 @@ async function loadMultiKeyState(): Promise<void> {
 
 // Show welcome prompt when no API keys are configured (once per session)
 let hasShownWelcome = false;
-async function showWelcomeIfNoKeys(): Promise<void> {
+function showWelcomeIfNoKeys(): void {
   if (hasShownWelcome) return;
   if (multiKeyState.visibleKeys.length > 0) return;
 
   hasShownWelcome = true;
   const strings = getRuntimeStrings();
-  const choice = await vscode.window.showInformationMessage(
-    strings.welcomeTitle,
-    { modal: true },
-    strings.welcomeConfigure,
-    strings.welcomeLater,
-  );
 
-  if (choice === strings.welcomeConfigure) {
-    await vscode.commands.executeCommand("minimaxUsage.addApiKey");
-  }
+  // Defer slightly so VS Code doesn't suppress the toast during startup
+  setTimeout(() => {
+    vscode.window.showInformationMessage(
+      strings.welcomeTitle,
+      strings.welcomeConfigure,
+      strings.welcomeLater,
+    ).then((choice) => {
+      if (choice === strings.welcomeConfigure) {
+        showDetailsPanel();
+      }
+    });
+  }, 500);
 }
 
 // Save API keys to config
