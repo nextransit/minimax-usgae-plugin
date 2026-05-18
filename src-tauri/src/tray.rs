@@ -649,7 +649,7 @@ pub fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                 }
                 "refresh" => {
                     // Multi-key refresh: iterate over all active keys
-                    let keys_to_fetch: Vec<(String, String)> = {
+                    let keys_to_fetch: Vec<(String, String, String)> = {
                         let state: State<AppState> = app.state();
                         let config = state.config.lock().unwrap();
                         config
@@ -658,16 +658,16 @@ pub fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                             .filter(|e| e.is_active)
                             .filter_map(|e| {
                                 crate::api_key_store::load_key_for_entry(e)
-                                    .map(|key| (e.id.clone(), key))
+                                    .map(|key| (e.id.clone(), key, e.endpoint.clone()))
                             })
                             .collect()
                     };
 
-                    for (key_id, api_key) in keys_to_fetch {
+                    for (key_id, api_key, endpoint) in keys_to_fetch {
                         let app_h_clone = app_h.clone();
                         let key_id_clone = key_id.clone();
                         tauri::async_runtime::spawn(async move {
-                            match crate::api::fetch_minimax_usage(&api_key, 15000).await {
+                            match crate::api::fetch_minimax_usage(&api_key, 15000, &endpoint).await {
                                 Ok(data) => {
                                     let state: State<AppState> = app_h_clone.state();
                                     {

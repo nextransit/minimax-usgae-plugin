@@ -128,6 +128,7 @@ fn migrate_v1_to_v2(config: &mut AppConfig) -> bool {
                 refresh_interval: config.refresh_interval_seconds,
                 created_at: chrono::Utc::now().timestamp(),
                 is_active: true,
+                endpoint: "domestic".to_string(),
             };
 
             match api_key_store::save_key_for_entry(&entry, &api_key) {

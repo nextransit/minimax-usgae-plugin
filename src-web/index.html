@@ -355,6 +355,13 @@
           <input type="number" id="key-edit-interval" class="dialog-input" value="20" min="5" />
         </div>
         <div class="form-group">
+          <label data-i18n="keyRegion">Region</label>
+          <select id="key-edit-endpoint" class="dialog-input">
+            <option value="domestic" data-i18n="regionDomestic">Domestic (minimaxi.com)</option>
+            <option value="overseas" data-i18n="regionOverseas">Overseas (minimax.io)</option>
+          </select>
+        </div>
+        <div class="form-group">
           <label data-i18n="apiKey">API Key</label>
           <input type="password" id="key-edit-api-key" class="dialog-input" placeholder="API Key" />
         </div>

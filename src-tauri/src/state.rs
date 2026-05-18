@@ -79,6 +79,12 @@ pub struct ApiKeyEntry {
     pub refresh_interval: u32,    // Seconds (min: 5, default: 20)
     pub created_at: i64,          // Unix timestamp
     pub is_active: bool,          // Whether this key is used
+    #[serde(default = "default_endpoint")]
+    pub endpoint: String,        // "domestic" (default) | "overseas"
+}
+
+fn default_endpoint() -> String {
+    "domestic".to_string()
 }
 
 pub struct AppState {

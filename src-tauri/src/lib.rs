@@ -88,7 +88,17 @@ async fn refresh_usage_data(
     }
 
     log::info!("Fetching usage data for key {} ({})", key_id, reason);
-    let fetch_result = api::fetch_minimax_usage(&api_key, API_FETCH_TIMEOUT_MS).await;
+    let endpoint = {
+        let state: tauri::State<AppState> = app_h.state();
+        let config = state.config.lock().unwrap();
+        config
+            .api_keys
+            .iter()
+            .find(|e| e.id == key_id)
+            .map(|e| e.endpoint.clone())
+            .unwrap_or_else(|| "domestic".to_string())
+    };
+    let fetch_result = api::fetch_minimax_usage(&api_key, API_FETCH_TIMEOUT_MS, &endpoint).await;
 
     {
         let state: tauri::State<AppState> = app_h.state();

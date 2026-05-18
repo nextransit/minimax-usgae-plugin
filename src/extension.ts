@@ -14,7 +14,15 @@ import { multiKeyState, ApiKeyEntry } from "./multiKeyState";
 import { SecretStore } from "./secretStore";
 import * as fs from "fs";
 
-const REMAINS_ENDPOINT = "https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains";
+const ENDPOINT_BASE_URLS: Record<string, string> = {
+  domestic: "https://www.minimaxi.com",
+  overseas: "https://platform.minimax.io",
+};
+
+function getEndpointUrl(endpoint?: string): string {
+  const base = ENDPOINT_BASE_URLS[endpoint || "domestic"] || ENDPOINT_BASE_URLS.domestic;
+  return `${base}/v1/api/openplatform/coding_plan/remains`;
+}
 
 type ModelRemain = {
   start_time?: number;
@@ -718,7 +726,8 @@ async function refreshUsageForKey(keyId: string, reason: "startup" | "auto" | "m
     updateStatusBar();
 
     const timeoutMs = readConfig().requestTimeoutMs;
-    const result = await fetchRemains(apiKey, timeoutMs);
+    const keyEntry = multiKeyState.getKeyById(keyId);
+    const result = await fetchRemains(apiKey, timeoutMs, keyEntry?.endpoint);
     const vm = buildUsageViewModel(result);
 
     multiKeyState.updateUsageForKey(keyId, vm);
@@ -1061,6 +1070,7 @@ async function handleInvokeCommand(
           id: k.id, name: k.name, color: k.color,
           refresh_interval: k.refreshInterval,
           created_at: k.createdAt, is_active: k.isActive,
+          endpoint: k.endpoint || "domestic",
           masked_key: "****" + k.id.slice(-4),
         })),
       };
@@ -1071,6 +1081,7 @@ async function handleInvokeCommand(
         id: k.id, name: k.name, color: k.color,
         refresh_interval: k.refreshInterval,
         created_at: k.createdAt, is_active: k.isActive,
+        endpoint: k.endpoint || "domestic",
         masked_key: "****" + k.id.slice(-4),
       }));
     }
@@ -1128,8 +1139,8 @@ async function handleInvokeCommand(
     }
 
     case "cmd_update_api_key": {
-      const { id, name, color, refreshInterval, apiKey } = (args || {}) as {
-        id: string; name: string; color: string; refreshInterval: number; apiKey?: string;
+      const { id, name, color, refreshInterval, apiKey, endpoint } = (args || {}) as {
+        id: string; name: string; color: string; refreshInterval: number; apiKey?: string; endpoint?: string;
       };
       const existing = multiKeyState.getKeyById(id);
       if (!existing) throw new Error("Key not found");
@@ -1137,6 +1148,7 @@ async function handleInvokeCommand(
       if (name) up.name = name;
       if (color) up.color = color;
       if (refreshInterval) up.refreshInterval = refreshInterval;
+      if (endpoint) up.endpoint = endpoint;
       multiKeyState.addOrUpdateKey(up as unknown as ApiKeyEntry);
       if (apiKey?.trim() && secretStore) {
         const v = validateApiKey(apiKey.trim());
@@ -1406,6 +1418,7 @@ async function addApiKey(name: string, apiKey: string): Promise<ApiKeyEntry | nu
     refreshInterval: readConfig().refreshIntervalSeconds,
     createdAt: Date.now(),
     isActive: true,
+    endpoint: "domestic",
   };
 
   await secretStore.saveKey(id, apiKey);
@@ -1621,11 +1634,11 @@ function buildUsageViewModel(result: RemainsResult): UsageViewModel {
   };
 }
 
-async function fetchRemains(apiKey: string, timeoutMs: number): Promise<RemainsResult> {
+async function fetchRemains(apiKey: string, timeoutMs: number, endpoint?: string): Promise<RemainsResult> {
   const strings = getRuntimeStrings();
   try {
     const { statusCode, body } = await requestJson({
-      url: REMAINS_ENDPOINT,
+      url: getEndpointUrl(endpoint),
       headers: {
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",

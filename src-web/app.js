@@ -252,6 +252,9 @@ const i18n = {
     keyColor: '颜色',
     keyRefresh: '刷新间隔（秒）',
     apiKey: 'API Key',
+    keyRegion: '区域',
+    regionDomestic: '国内 (minimaxi.com)',
+    regionOverseas: '海外 (minimax.io)',
     // multi-key view
     allKeys: '全部',
     keysActiveCount: '个密钥',
@@ -347,6 +350,9 @@ const i18n = {
     keyColor: 'Color',
     keyRefresh: 'Refresh Interval (seconds)',
     apiKey: 'API Key',
+    keyRegion: 'Region',
+    regionDomestic: 'Domestic (minimaxi.com)',
+    regionOverseas: 'Overseas (minimax.io)',
     // multi-key view
     allKeys: 'ALL',
     keysActiveCount: 'keys',
@@ -2150,6 +2156,15 @@ function openKeyEditDialog(keyId = null) {
   const colorInput = document.getElementById('key-edit-color');
   const intervalInput = document.getElementById('key-edit-interval');
   const apiKeyInput = document.getElementById('key-edit-api-key');
+  const endpointSelect = document.getElementById('key-edit-endpoint');
+
+  // 动态设置 endpoint option 文本（i18n）
+  if (endpointSelect) {
+    endpointSelect.querySelectorAll('option').forEach(opt => {
+      const i18nKey = opt.getAttribute('data-i18n');
+      if (i18nKey) opt.textContent = t(i18nKey);
+    });
+  }
 
   if (keyId) {
     // Edit mode
@@ -2160,6 +2175,7 @@ function openKeyEditDialog(keyId = null) {
       nameInput.value = key.name;
       colorInput.value = key.color;
       intervalInput.value = key.refresh_interval;
+      if (endpointSelect) endpointSelect.value = key.endpoint || 'domestic';
       apiKeyInput.type = 'text';
       apiKeyInput.value = key.masked_key || '';
       apiKeyInput.dataset.maskedKey = key.masked_key || '';
@@ -2172,6 +2188,7 @@ function openKeyEditDialog(keyId = null) {
     nameInput.value = '';
     colorInput.value = '#00d4ff';
     intervalInput.value = '20';
+    if (endpointSelect) endpointSelect.value = 'domestic';
     apiKeyInput.type = 'password';
     apiKeyInput.value = '';
     apiKeyInput.dataset.maskedKey = '';
@@ -2204,6 +2221,7 @@ async function saveKeyEdit() {
   const maskedKey = apiKeyInput.dataset.maskedKey || '';
   const rawApiKey = apiKeyInput.value.trim();
   const apiKey = id && rawApiKey === maskedKey ? '' : rawApiKey;
+  const endpoint = document.getElementById('key-edit-endpoint')?.value || 'domestic';
 
   console.log('[saveKeyEdit] Starting, id:', id, 'name:', name);
   
@@ -2223,7 +2241,7 @@ async function saveKeyEdit() {
     if (id) {
       console.log('[saveKeyEdit] Updating existing key:', id);
       await invokeWithTimeout('cmd_update_api_key', {
-        id, name, color, refreshInterval: interval, apiKey: apiKey || null
+        id, name, color, refreshInterval: interval, apiKey: apiKey || null, endpoint
       }, WRITE_IPC_TIMEOUT_MS);
       console.log('[saveKeyEdit] Update successful');
     } else {
@@ -2234,7 +2252,7 @@ async function saveKeyEdit() {
       }
       console.log('[saveKeyEdit] Adding new key, name:', name);
       const result = await invokeWithTimeout('cmd_add_api_key', {
-        name, color, apiKey: apiKey, refreshInterval: interval
+        name, color, apiKey: apiKey, refreshInterval: interval, endpoint
       }, WRITE_IPC_TIMEOUT_MS);
       console.log('[saveKeyEdit] Add successful, result:', result);
     }

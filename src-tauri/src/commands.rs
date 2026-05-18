@@ -16,6 +16,7 @@ pub struct ApiKeyView {
     pub created_at: i64,
     pub is_active: bool,
     pub masked_key: Option<String>,
+    pub endpoint: String,
 }
 
 fn mask_api_key(key: &str) -> String {
@@ -49,6 +50,7 @@ fn api_key_view(entry: ApiKeyEntry) -> ApiKeyView {
         created_at: entry.created_at,
         is_active: entry.is_active,
         masked_key,
+        endpoint: entry.endpoint.clone(),
     }
 }
 
@@ -135,7 +137,7 @@ pub fn cmd_clear_api_key(app: AppHandle, state: State<'_, AppState>) -> Result<(
 
 #[tauri::command]
 pub async fn cmd_fetch_usage(api_key: String, timeout_ms: u64) -> Result<UsageData, String> {
-    crate::api::fetch_minimax_usage(&api_key, timeout_ms)
+    crate::api::fetch_minimax_usage(&api_key, timeout_ms, "domestic")
         .await
         .map_err(|e| e.to_string())
 }
@@ -199,11 +201,13 @@ pub async fn cmd_add_api_key(
     color: String,
     api_key: String,
     refresh_interval: u32,
+    endpoint: Option<String>,
 ) -> Result<ApiKeyEntry, String> {
     // Validate key first
+    let ep = endpoint.clone().unwrap_or_else(|| "domestic".to_string());
     let test_result = tokio::time::timeout(
         std::time::Duration::from_secs(12),
-        crate::api::fetch_minimax_usage(&api_key, 10000),
+        crate::api::fetch_minimax_usage(&api_key, 10000, &ep),
     )
     .await
     .map_err(|_| "API key validation timed out".to_string())?;
@@ -220,6 +224,7 @@ pub async fn cmd_add_api_key(
         refresh_interval,
         created_at: chrono::Utc::now().timestamp(),
         is_active: true,
+        endpoint: ep,
     };
 
     // Save key to Keychain
@@ -247,6 +252,7 @@ pub fn cmd_update_api_key(
     color: String,
     refresh_interval: u32,
     api_key: Option<String>,
+    endpoint: Option<String>,
 ) -> Result<(), String> {
     // If updating the key itself, extract keychain info first (must borrow before lock is released)
     let keychain_update = api_key.as_ref().and_then(|new_key| {
@@ -265,6 +271,9 @@ pub fn cmd_update_api_key(
         entry.name = name;
         entry.color = color;
         entry.refresh_interval = refresh_interval;
+        if let Some(ref ep) = endpoint {
+            entry.endpoint = ep.clone();
+        }
     }
     crate::config::save_config(&config).map_err(|e| e.to_string())?;
     drop(config);
@@ -280,6 +289,7 @@ pub fn cmd_update_api_key(
             refresh_interval: 0,
             created_at: 0,
             is_active: false,
+            endpoint: "domestic".to_string(),
         };
         crate::api_key_store::save_key_for_entry(&entry_for_store, &key)?;
     }
@@ -334,7 +344,7 @@ pub fn cmd_delete_api_key(
 pub async fn cmd_test_api_key(api_key: String) -> Result<UsageData, String> {
     tokio::time::timeout(
         std::time::Duration::from_secs(12),
-        crate::api::fetch_minimax_usage(&api_key, 10000),
+        crate::api::fetch_minimax_usage(&api_key, 10000, "domestic"),
     )
     .await
     .map_err(|_| "API key test timed out".to_string())?
@@ -418,7 +428,7 @@ pub async fn cmd_refresh_all_usage_data(
                 Some(key) => {
                     match tokio::time::timeout(
                         std::time::Duration::from_millis(COMMAND_TIMEOUT_MS),
-                        crate::api::fetch_minimax_usage(&key, FETCH_TIMEOUT_MS),
+                        crate::api::fetch_minimax_usage(&key, FETCH_TIMEOUT_MS, &entry.endpoint),
                     )
                     .await
                     {

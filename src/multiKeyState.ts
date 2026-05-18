@@ -9,6 +9,7 @@ export interface ApiKeyEntry {
   refreshInterval: number;
   createdAt: number;
   isActive: boolean;
+  endpoint?: string; // "domestic" (default) | "overseas"
 }
 
 export interface UsageViewModel {

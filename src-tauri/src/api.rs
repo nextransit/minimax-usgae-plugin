@@ -8,7 +8,6 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-const REMAINS_ENDPOINT: &str = "https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains";
 const CONNECT_TIMEOUT_MS: u64 = 6_000;
 #[cfg(target_os = "macos")]
 const CURL_FALLBACK_MAX_TIME_MS: u64 = 8_000;
@@ -55,13 +54,23 @@ struct ModelRemain {
     weekly_remains_time: Option<i64>,
 }
 
+fn resolve_endpoint(endpoint: &str) -> String {
+    let base = match endpoint {
+        "overseas" => "https://platform.minimax.io",
+        _ => "https://www.minimaxi.com",
+    };
+    format!("{}/v1/api/openplatform/coding_plan/remains", base)
+}
+
 pub async fn fetch_minimax_usage(
     api_key: &str,
     timeout_ms: u64,
+    endpoint: &str,
 ) -> Result<UsageData, Box<dyn std::error::Error + Send + Sync>> {
     let api_key = api_key.to_string();
+    let url = resolve_endpoint(endpoint);
     let payload =
-        tokio::task::spawn_blocking(move || fetch_minimax_payload_blocking(&api_key, timeout_ms))
+        tokio::task::spawn_blocking(move || fetch_minimax_payload_blocking(&api_key, timeout_ms, &url))
             .await
             .map_err(|e| format!("MiniMax request task failed: {}", e))??;
 
@@ -241,8 +250,9 @@ pub async fn fetch_minimax_usage(
 fn fetch_minimax_payload_blocking(
     api_key: &str,
     timeout_ms: u64,
+    url: &str,
 ) -> Result<MiniMaxResponse, Box<dyn std::error::Error + Send + Sync>> {
-    match fetch_minimax_payload_reqwest(api_key, timeout_ms) {
+    match fetch_minimax_payload_reqwest(api_key, timeout_ms, url) {
         Ok(payload) => Ok(payload),
         Err(error) => {
             let reqwest_error = format_reqwest_error(&error);
@@ -256,7 +266,7 @@ fn fetch_minimax_payload_blocking(
                     "MiniMax request failed through reqwest, trying system curl fallback: {}",
                     reqwest_error
                 );
-                match fetch_minimax_payload_curl(api_key, timeout_ms) {
+                match fetch_minimax_payload_curl(api_key, timeout_ms, url) {
                     Ok(payload) => {
                         log::info!("MiniMax request recovered through system curl fallback");
                         Ok(payload)
@@ -281,6 +291,7 @@ fn fetch_minimax_payload_blocking(
 fn fetch_minimax_payload_reqwest(
     api_key: &str,
     timeout_ms: u64,
+    url: &str,
 ) -> Result<MiniMaxResponse, reqwest::Error> {
     let client = reqwest::blocking::Client::builder()
         .no_proxy()
@@ -289,7 +300,7 @@ fn fetch_minimax_payload_reqwest(
         .build()?;
 
     client
-        .get(REMAINS_ENDPOINT)
+        .get(url)
         .header("Authorization", format!("Bearer {}", api_key))
         .header("Content-Type", "application/json")
         .header("Accept", "application/json")
@@ -301,6 +312,7 @@ fn fetch_minimax_payload_reqwest(
 fn fetch_minimax_payload_curl(
     api_key: &str,
     timeout_ms: u64,
+    url: &str,
 ) -> Result<MiniMaxResponse, Box<dyn std::error::Error + Send + Sync>> {
     validate_header_value(api_key)?;
 
@@ -319,7 +331,7 @@ fn fetch_minimax_payload_curl(
         .arg("--request")
         .arg("GET")
         .arg("--url")
-        .arg(REMAINS_ENDPOINT)
+        .arg(url)
         .arg("--header")
         .arg("Content-Type: application/json")
         .arg("--header")
