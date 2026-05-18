@@ -112,8 +112,8 @@ pub async fn fetch_minimax_usage(
 
     let (total_count, remaining_count, used_count, used_percent) = if let Some(m) = primary {
         let total = m.current_interval_total_count.unwrap_or(0);
-        let used = m.current_interval_usage_count.unwrap_or(0);
-        let remaining = total.saturating_sub(used);
+        let remaining = m.current_interval_usage_count.unwrap_or(0);
+        let used = total.saturating_sub(remaining);
         let percent = if total > 0 {
             (used as f64 / total as f64) * 100.0
         } else {
@@ -126,8 +126,8 @@ pub async fn fetch_minimax_usage(
 
     let (weekly_total, weekly_remaining, weekly_used, weekly_percent) = if let Some(m) = primary {
         let total = m.current_weekly_total_count.unwrap_or(0);
-        let used = m.current_weekly_usage_count.unwrap_or(0);
-        let remaining = total.saturating_sub(used);
+        let remaining = m.current_weekly_usage_count.unwrap_or(0);
+        let used = total.saturating_sub(remaining);
         let percent = if total > 0 {
             (used as f64 / total as f64) * 100.0
         } else {
@@ -194,8 +194,8 @@ pub async fn fetch_minimax_usage(
         })
         .map(|m| {
             let total = m.current_interval_total_count.unwrap_or(0);
-            let used = m.current_interval_usage_count.unwrap_or(0);
-            let remaining = total.saturating_sub(used);
+            let remaining = m.current_interval_usage_count.unwrap_or(0);
+            let used = total.saturating_sub(remaining);
             let (time_window, _) = match (m.start_time, m.end_time) {
                 (Some(start), Some(end)) => {
                     let start_dt = DateTime::from_timestamp(start / 1000, 0)
