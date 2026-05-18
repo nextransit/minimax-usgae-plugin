@@ -71,7 +71,7 @@ export function selectCompactStateIcon(state: CompactState): string {
     case "waiting":
       return "$(sync)";
     case "missingKey":
-      return "$(key)";
+      return "⚠";
     case "error":
       return "$(error)";
   }

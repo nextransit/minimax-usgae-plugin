@@ -183,7 +183,7 @@
             <div class="risk-text">
               <h3 data-i18n="riskTitle">Risk Warning</h3>
               <ul>
-                <li><span id="risk-window-label" data-i18n="riskRemaining">Minimum remaining requests only </span><span id="risk-remaining-percent">0</span></li>
+                <li><span id="risk-window-label" data-i18n="riskRemaining">Current window remaining requests only </span><span id="risk-remaining-percent">0</span></li>
                 <li id="risk-message" data-i18n="riskFast">Consuming quickly. Please monitor usage to avoid rate limits.</li>
               </ul>
             </div>
@@ -316,9 +316,6 @@
           <button id="btn-config-key" class="action-link">
             <span class="link-icon">🔑</span> <span data-i18n="keyConfig">KEY CONFIG</span>
           </button>
-          <button id="btn-clear-cache" class="action-link danger">
-            <span class="link-icon">🗑️</span> <span data-i18n="reset">RESET</span>
-          </button>
         </div>
       </footer>
     </div>
@@ -331,7 +328,7 @@
         <div id="key-list" class="key-list"></div>
         <div class="key-management-footer">
           <button id="btn-add-key-modal" class="btn btn-neon" style="margin-top: 16px;">
-            + Add New Key
+            <span data-i18n="addKey">+ ADD</span>
           </button>
         </div>
       </div>
@@ -366,8 +363,8 @@
           <input type="password" id="key-edit-api-key" class="dialog-input" placeholder="API Key" />
         </div>
         <div class="dialog-actions">
-          <button id="btn-cancel-key-edit" class="btn">Cancel</button>
-          <button id="btn-save-key-edit" class="btn btn-neon">Save</button>
+          <button id="btn-cancel-key-edit" class="btn" data-i18n="cancel">Cancel</button>
+          <button id="btn-save-key-edit" class="btn btn-neon" data-i18n="save">Save</button>
         </div>
       </div>
     </div>

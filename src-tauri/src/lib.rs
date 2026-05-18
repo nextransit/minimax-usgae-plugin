@@ -28,8 +28,53 @@ const FRONTEND_JS: &str = include_str!("../../src-web/app.js");
 const API_FETCH_TIMEOUT_MS: u64 = 15_000;
 const MIN_REFRESH_INTERVAL_SECONDS: u64 = 5;
 const KEY_REFRESH_STAGGER_MS: u64 = 250;
+const RISK_REMAINING_RATIO_THRESHOLD: f64 = 0.10;
 const CLOSE_TRANSIENT_DIALOGS_JS: &str =
     "window.__MINIMAX_CLOSE_TRANSIENT_DIALOGS__ && window.__MINIMAX_CLOSE_TRANSIENT_DIALOGS__();";
+
+#[derive(Debug, Clone, Copy)]
+struct QuotaRiskCandidate {
+    remaining_count: i64,
+    total_count: i64,
+    remaining_ratio: f64,
+    window: &'static str,
+}
+
+fn build_quota_risk_candidate(
+    remaining_count: Option<i64>,
+    total_count: Option<i64>,
+    window: &'static str,
+) -> Option<QuotaRiskCandidate> {
+    let remaining_count = remaining_count?;
+    let total_count = total_count?;
+
+    if total_count <= 0 {
+        return None;
+    }
+
+    let normalized_remaining = remaining_count.max(0);
+    Some(QuotaRiskCandidate {
+        remaining_count: normalized_remaining,
+        total_count,
+        remaining_ratio: normalized_remaining as f64 / total_count as f64,
+        window,
+    })
+}
+
+fn pick_lowest_remaining_ratio_candidate(
+    candidates: Vec<QuotaRiskCandidate>,
+) -> Option<QuotaRiskCandidate> {
+    candidates.into_iter().reduce(|lowest, candidate| {
+        if candidate.remaining_ratio < lowest.remaining_ratio
+            || ((candidate.remaining_ratio - lowest.remaining_ratio).abs() < f64::EPSILON
+                && candidate.remaining_count < lowest.remaining_count)
+        {
+            candidate
+        } else {
+            lowest
+        }
+    })
+}
 
 // Use frontend resources to prevent unused warnings
 fn _use_frontend_resources() {
@@ -128,18 +173,45 @@ async fn refresh_usage_data(
             if data.ok {
                 let mut risk_candidates = Vec::new();
                 if !data.models.is_empty() {
-                    if let Some(current_min) = data.models.iter().map(|m| m.remaining_count).min() {
-                        risk_candidates.push(current_min);
+                    for model in &data.models {
+                        if let Some(candidate) = build_quota_risk_candidate(
+                            Some(model.remaining_count),
+                            Some(model.total_count),
+                            "current",
+                        ) {
+                            risk_candidates.push(candidate);
+                        }
                     }
                 } else if let Some(remaining) = data.remaining_count {
-                    risk_candidates.push(remaining);
+                    if let Some(candidate) =
+                        build_quota_risk_candidate(Some(remaining), data.total_count, "current")
+                    {
+                        risk_candidates.push(candidate);
+                    }
                 }
-                if let Some(weekly_remaining) = data.weekly_remaining_count {
-                    risk_candidates.push(weekly_remaining);
+                if let Some(candidate) = build_quota_risk_candidate(
+                    data.weekly_remaining_count,
+                    data.weekly_total_count,
+                    "weekly",
+                ) {
+                    risk_candidates.push(candidate);
                 }
-                let min_remaining = risk_candidates.into_iter().min();
+                let risk_candidate = pick_lowest_remaining_ratio_candidate(risk_candidates);
 
-                if let Some(min_remaining_count) = min_remaining {
+                if let Some(risk) = risk_candidate {
+                    log::info!(
+                        "Quota risk check for key {}: window={}, remaining={}, total={}, ratio={:.2}%",
+                        key_id,
+                        risk.window,
+                        risk.remaining_count,
+                        risk.total_count,
+                        risk.remaining_ratio * 100.0
+                    );
+                }
+
+                if let Some(risk) =
+                    risk_candidate.filter(|risk| risk.remaining_ratio < RISK_REMAINING_RATIO_THRESHOLD)
+                {
                     let key_name = {
                         let config = state.config.lock().unwrap();
                         config
@@ -149,7 +221,15 @@ async fn refresh_usage_data(
                             .map(|e| e.name.clone())
                             .unwrap_or_else(|| key_id.clone())
                     };
-                    notifications::check_and_notify(app_h, &key_id, &key_name, min_remaining_count);
+                    notifications::check_and_notify(
+                        app_h,
+                        &key_id,
+                        &key_name,
+                        risk.window,
+                        risk.remaining_count,
+                        risk.total_count,
+                        risk.remaining_ratio,
+                    );
                 }
             }
         }

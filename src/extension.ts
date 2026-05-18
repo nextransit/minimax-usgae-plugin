@@ -106,6 +106,16 @@ type StatusItemSpec = {
   backgroundColor?: vscode.ThemeColor;
 };
 
+type QuotaRiskWindow = "current" | "weekly";
+
+type QuotaRiskCandidate = {
+  remainingCount: number;
+  totalCount: number;
+  remainingRatio: number;
+  window: QuotaRiskWindow;
+  modelName: string;
+};
+
 type ManagedStatusItem = {
   item: vscode.StatusBarItem;
   alignment: vscode.StatusBarAlignment;
@@ -122,9 +132,10 @@ let latestVm: UsageViewModel | null = null;
 let latestRawResponse: unknown = null;
 let lastUpdatedAt: Date | null = null;
 let isRefreshing = false;
-let hasAlertedHighRisk = false;
-let hasAlertedHighRiskWeekly = false;
+const alertedRiskWindows = new Set<string>();
+const RISK_REMAINING_RATIO_THRESHOLD = 0.10;
 let detailsPanel: vscode.WebviewPanel | undefined;
+let hasShownWelcomeThisSession = false;
 const emptyUsageViewModel = {
   primaryModelName: "",
   minRemainingModelName: "",
@@ -179,16 +190,16 @@ function getRuntimeStrings(config: ExtensionConfig = readConfig()) {
     warnSetApiKeyFirst: isEn ? "Please run \"MiniMax Usage: Set API Key\" first" : "请先运行 “MiniMax Usage: Set API Key”",
     warnRiskLowQuota:
       isEn
-        ? "MiniMax risk warning: only "
-        : "MiniMax 风险提示: 最小剩余请求次数仅 ",
+        ? "MiniMax risk warning: current window has only "
+        : "MiniMax 风险提示: 当前周期剩余请求次数仅 ",
     warnRiskLowQuotaSuffix:
       isEn
         ? " requests left. Consider lowering request frequency or switching models."
         : " 次，即将耗尽！建议降低请求频率或切换模型。",
     warnRiskLowQuotaWeekly:
       isEn
-        ? "MiniMax weekly warning: only "
-        : "MiniMax 每周风险提示: 本周最小剩余请求次数仅 ",
+        ? "MiniMax risk warning: weekly quota has only "
+        : "MiniMax 风险提示: 本周剩余请求次数仅 ",
     warnRiskLowQuotaWeeklySuffix:
       isEn
         ? " requests left this week. Consider lowering request frequency or switching models."
@@ -282,7 +293,6 @@ function getRuntimeStrings(config: ExtensionConfig = readConfig()) {
     panelSyncedAt: isEn ? "SYNCED AT: " : "最后同步: ",
     panelSyncData: isEn ? "SYNC DATA" : "刷新数据",
     panelKeyConfig: isEn ? "KEY CONFIG" : "配置密钥",
-    panelReset: isEn ? "RESET" : "清除缓存",
     panelRiskTitle: isEn ? "Risk Warning" : "风险提示",
     panelRiskRemaining: isEn ? "Current window remaining only " : "当前窗口剩余仅 ",
     panelRiskExhausted:
@@ -436,6 +446,10 @@ function registerCommands(context: vscode.ExtensionContext): void {
 
     vscode.commands.registerCommand("minimaxUsage.showDetails", async () => {
       showDetailsPanel();
+    }),
+
+    vscode.commands.registerCommand("minimaxUsage.manageApiKeys", async () => {
+      showKeyManagementPanel();
     }),
 
     vscode.commands.registerCommand("minimaxUsage.copyRawResponse", async () => {
@@ -753,34 +767,40 @@ async function refreshUsageForKey(keyId: string, reason: "startup" | "auto" | "m
 
     log(`refresh key [${keyId}] [${reason}] ok=${result.ok} status=${result.statusCode ?? "N/A"}`);
 
-    // High-risk popup — check current interval and weekly separately
-    // to avoid false alarms when only one window is low.
+    // High-risk popup: use the normalized remaining ratio only.
+    // MiniMax API `usage_count` means used count; remaining is derived as
+    // total_count - usage_count in buildUsageViewModel().
     if (result.ok) {
-      const currentRemaining = vm.remainingCount;
-      const weeklyRemaining = vm.weeklyRemainingCount;
+      const riskCandidate = getLowestRemainingRatioCandidate(vm);
 
-      // Current interval alert (primary model)
-      if (currentRemaining !== null && currentRemaining <= 5) {
-        if (!hasAlertedHighRisk) {
-          void vscode.window.showWarningMessage(
-            `${strings.warnRiskLowQuota}${currentRemaining}${strings.warnRiskLowQuotaSuffix}`,
-          );
-          hasAlertedHighRisk = true;
+      log(
+        `quota key [${keyId}] current used=${vm.usedCount ?? "N/A"} remaining=${vm.remainingCount ?? "N/A"} total=${vm.totalCount ?? "N/A"} weekly_used=${vm.weeklyUsedCount ?? "N/A"} weekly_remaining=${vm.weeklyRemainingCount ?? "N/A"} weekly_total=${vm.weeklyTotalCount ?? "N/A"} risk_remaining=${riskCandidate?.remainingCount ?? "N/A"} risk_total=${riskCandidate?.totalCount ?? "N/A"} risk_ratio=${riskCandidate ? formatRatioForLog(riskCandidate.remainingRatio) : "N/A"} risk_window=${riskCandidate?.window ?? "N/A"}`,
+      );
+
+      if (riskCandidate && riskCandidate.remainingRatio < RISK_REMAINING_RATIO_THRESHOLD) {
+        const alertKey = `${keyId}:${riskCandidate.window}`;
+        const otherAlertKey = `${keyId}:${riskCandidate.window === "weekly" ? "current" : "weekly"}`;
+        alertedRiskWindows.delete(otherAlertKey);
+
+        if (!alertedRiskWindows.has(alertKey)) {
+          const ratioText = formatRatioForLog(riskCandidate.remainingRatio);
+          const message = strings.isEn
+            ? (
+              riskCandidate.window === "weekly"
+                ? `MiniMax risk warning: weekly quota has only ${riskCandidate.remainingCount}/${riskCandidate.totalCount} (${ratioText}) requests left. Consider lowering request frequency or switching models.`
+                : `MiniMax risk warning: current window has only ${riskCandidate.remainingCount}/${riskCandidate.totalCount} (${ratioText}) requests left. Consider lowering request frequency or switching models.`
+            )
+            : (
+              riskCandidate.window === "weekly"
+                ? `MiniMax 风险提示: 本周剩余请求次数仅 ${riskCandidate.remainingCount}/${riskCandidate.totalCount}（${ratioText}），即将耗尽！建议降低请求频率或切换模型。`
+                : `MiniMax 风险提示: 当前周期剩余请求次数仅 ${riskCandidate.remainingCount}/${riskCandidate.totalCount}（${ratioText}），即将耗尽！建议降低请求频率或切换模型。`
+            );
+          void vscode.window.showWarningMessage(message);
+          alertedRiskWindows.add(alertKey);
         }
       } else {
-        hasAlertedHighRisk = false;
-      }
-
-      // Weekly alert
-      if (weeklyRemaining !== null && weeklyRemaining <= 5) {
-        if (!hasAlertedHighRiskWeekly) {
-          void vscode.window.showWarningMessage(
-            `${strings.warnRiskLowQuotaWeekly}${weeklyRemaining}${strings.warnRiskLowQuotaWeeklySuffix}`,
-          );
-          hasAlertedHighRiskWeekly = true;
-        }
-      } else {
-        hasAlertedHighRiskWeekly = false;
+        alertedRiskWindows.delete(`${keyId}:current`);
+        alertedRiskWindows.delete(`${keyId}:weekly`);
       }
     }
 
@@ -883,8 +903,9 @@ function updateStatusBar(): void {
       basePriority,
       `${selectCompactStateIcon("missingKey")} ${strings.statusSetApiKeyCompact}`,
       buildMissingKeyTooltip(),
-      "minimaxUsage.showDetails",
+      "minimaxUsage.manageApiKeys",
       new vscode.ThemeColor("statusBarItem.warningForeground"),
+      new vscode.ThemeColor("statusBarItem.warningBackground"),
     );
     renderStatusItems(specs);
     pushUsageDataToWebview();
@@ -987,7 +1008,7 @@ function buildMissingKeyTooltip(): vscode.MarkdownString {
   md.isTrusted = true;
   md.supportThemeIcons = true;
   md.appendMarkdown(`**${strings.tooltipTitle}**\n\n${strings.tooltipMissingKey}`);
-  md.appendMarkdown(`[$(key) ${strings.actionSetApiKey}](command:minimaxUsage.addApiKey)`);
+  md.appendMarkdown(`[$(key) ${strings.actionSetApiKey}](command:minimaxUsage.manageApiKeys)`);
   return md;
 }
 
@@ -1058,6 +1079,40 @@ function convertUsageToAppJsFormat(u: UsageViewModel): Record<string, unknown> {
   };
 }
 
+// Mask API key for display: show prefix + "..." + suffix
+// Matches the Tauri mask_api_key logic
+function maskApiKey(key: string): string {
+  const len = key.length;
+  if (len === 0) return "";
+  if (len > 10) {
+    return key.slice(0, 6) + "..." + key.slice(-4);
+  }
+  if (len <= 4) return "*".repeat(len);
+  return key.slice(0, 2) + "..." + key.slice(-2);
+}
+
+// Build API key list with masked key values loaded from SecretStorage
+async function buildKeyListWithMaskedKeys(keys: ApiKeyEntry[]): Promise<Record<string, unknown>[]> {
+  const result: Record<string, unknown>[] = [];
+  for (const k of keys) {
+    let masked = "****";
+    if (secretStore) {
+      const raw = await secretStore.loadKey(k.id);
+      if (raw) {
+        masked = maskApiKey(raw);
+      }
+    }
+    result.push({
+      id: k.id, name: k.name, color: k.color,
+      refresh_interval: k.refreshInterval,
+      created_at: k.createdAt, is_active: k.isActive,
+      endpoint: k.endpoint || "domestic",
+      masked_key: masked,
+    });
+  }
+  return result;
+}
+
 async function handleInvokeCommand(
   cmd: string,
   args?: Record<string, unknown>,
@@ -1067,6 +1122,7 @@ async function handleInvokeCommand(
   switch (cmd) {
     case "cmd_get_config": {
       const config = readConfig();
+      const apiKeys = await buildKeyListWithMaskedKeys(keys);
       return {
         config_version: 2,
         refresh_interval_seconds: config.refreshIntervalSeconds,
@@ -1076,24 +1132,12 @@ async function handleInvokeCommand(
         first_run: false,
         start_minimized: false,
         enable_notifications: true,
-        api_keys: keys.map((k) => ({
-          id: k.id, name: k.name, color: k.color,
-          refresh_interval: k.refreshInterval,
-          created_at: k.createdAt, is_active: k.isActive,
-          endpoint: k.endpoint || "domestic",
-          masked_key: "****" + k.id.slice(-4),
-        })),
+        api_keys: apiKeys,
       };
     }
 
     case "cmd_get_api_keys": {
-      return keys.map((k) => ({
-        id: k.id, name: k.name, color: k.color,
-        refresh_interval: k.refreshInterval,
-        created_at: k.createdAt, is_active: k.isActive,
-        endpoint: k.endpoint || "domestic",
-        masked_key: "****" + k.id.slice(-4),
-      }));
+      return buildKeyListWithMaskedKeys(keys);
     }
 
     case "cmd_get_all_usage_data": {
@@ -1136,13 +1180,13 @@ async function handleInvokeCommand(
     }
 
     case "cmd_add_api_key": {
-      const { name, apiKey } = (args || {}) as {
-        name: string; apiKey: string;
+      const { name, apiKey, color, refreshInterval, endpoint } = (args || {}) as {
+        name: string; apiKey: string; color?: string; refreshInterval?: number; endpoint?: string;
       };
       if (!apiKey) throw new Error("API key is required");
       const v = validateApiKey(apiKey);
       if (!v.ok) throw new Error(v.message);
-      const k = await addApiKey(name, apiKey);
+      const k = await addApiKey(name, apiKey, { color, refreshInterval, endpoint });
       if (!k) throw new Error("Failed to add key");
       await refreshUsageForKey(k.id, "manual");
       return { ok: true };
@@ -1244,6 +1288,21 @@ function showDetailsPanel(): void {
   detailsPanel.webview.html = loadSameOriginWebviewHtml(detailsPanel.webview);
 }
 
+function showKeyManagementPanel(): void {
+  showDetailsPanel();
+  postWebviewEvent("show-key-management");
+}
+
+function postWebviewEvent(name: string, payload: unknown = null): void {
+  if (!detailsPanel) return;
+  const message = { type: "event", name, payload };
+  for (const delayMs of [100, 300, 800]) {
+    setTimeout(() => {
+      void detailsPanel?.webview.postMessage(message);
+    }, delayMs);
+  }
+}
+
 function pushUsageDataToWebview(): void {
   if (!detailsPanel) return;
   for (const key of multiKeyState.visibleKeys) {
@@ -1289,7 +1348,7 @@ function buildMultiKeyTooltip(config: ExtensionConfig): vscode.MarkdownString {
   if (activeKeys.length === 0) {
     md.appendMarkdown(strings.tooltipMissingKey);
     md.appendMarkdown(
-      `[$(key) ${strings.actionSetApiKey}](command:minimaxUsage.addApiKey)`,
+      `[$(key) ${strings.actionSetApiKey}](command:minimaxUsage.manageApiKeys)`,
     );
     return md;
   }
@@ -1336,7 +1395,7 @@ function buildMultiKeyTooltip(config: ExtensionConfig): vscode.MarkdownString {
 
   md.appendMarkdown("\n\n");
   md.appendMarkdown(
-    `[$(refresh) ${strings.actionRefresh}](command:minimaxUsage.refreshAll) · [$(key) ${strings.actionSetApiKey}](command:minimaxUsage.addApiKey)`,
+    `[$(refresh) ${strings.actionRefresh}](command:minimaxUsage.refreshAll) · [$(key) ${strings.actionSetApiKey}](command:minimaxUsage.manageApiKeys)`,
   );
 
   return md;
@@ -1380,13 +1439,13 @@ async function loadMultiKeyState(): Promise<void> {
   log(`loaded ${keys.length} keys, selected=${selectedId}`);
 }
 
-// Show welcome prompt when no API keys are configured (once per session)
-let hasShownWelcome = false;
+// Show welcome prompt when no API keys are configured (once per extension-host session).
 function showWelcomeIfNoKeys(): void {
-  if (hasShownWelcome) return;
+  if (!contextRef) return;
+  if (hasShownWelcomeThisSession) return;
   if (multiKeyState.visibleKeys.length > 0) return;
 
-  hasShownWelcome = true;
+  hasShownWelcomeThisSession = true;
   const strings = getRuntimeStrings();
 
   // Defer slightly so VS Code doesn't suppress the toast during startup
@@ -1397,7 +1456,7 @@ function showWelcomeIfNoKeys(): void {
       strings.welcomeLater,
     ).then((choice) => {
       if (choice === strings.welcomeConfigure) {
-        showDetailsPanel();
+        showKeyManagementPanel();
       }
     });
   }, 500);
@@ -1435,23 +1494,27 @@ async function setSelectedKey(keyId: string): Promise<void> {
 }
 
 // Add a new API key
-async function addApiKey(name: string, apiKey: string): Promise<ApiKeyEntry | null> {
+async function addApiKey(
+  name: string,
+  apiKey: string,
+  options: { color?: string; refreshInterval?: number; endpoint?: string } = {},
+): Promise<ApiKeyEntry | null> {
   if (!secretStore) return null;
 
   const existingKeys = multiKeyState.visibleKeys;
   const usedColors = existingKeys.map((k) => k.color);
   const palette = ["#00d4ff", "#ff6b6b", "#feca57", "#48dbfb", "#ff9ff3", "#1dd1a1", "#ff9f43", "#a29bfe"];
-  const color = palette.find((c) => !usedColors.includes(c)) || palette[0];
+  const color = options.color || palette.find((c) => !usedColors.includes(c)) || palette[0];
 
   const id = `key_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const newKey: ApiKeyEntry = {
     id,
     name,
     color,
-    refreshInterval: readConfig().refreshIntervalSeconds,
+    refreshInterval: options.refreshInterval || readConfig().refreshIntervalSeconds,
     createdAt: Date.now(),
     isActive: true,
-    endpoint: "domestic",
+    endpoint: options.endpoint === "overseas" ? "overseas" : "domestic",
   };
 
   await secretStore.saveKey(id, apiKey);
@@ -1537,6 +1600,106 @@ function clampNumber(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, Math.floor(value)));
 }
 
+function buildCurrentQuotaRiskCandidate(
+  remainingCount: number | null,
+  totalCount: number | null,
+  modelName: string,
+): QuotaRiskCandidate | null {
+  if (remainingCount === null || totalCount === null || totalCount <= 0) {
+    return null;
+  }
+
+  const normalizedRemaining = Math.max(remainingCount, 0);
+  return {
+    remainingCount: normalizedRemaining,
+    totalCount,
+    remainingRatio: normalizedRemaining / totalCount,
+    window: "current",
+    modelName,
+  };
+}
+
+function buildWeeklyQuotaRiskCandidate(
+  remainingCount: number | null,
+  totalCount: number | null,
+  modelName: string,
+): QuotaRiskCandidate | null {
+  if (remainingCount === null || totalCount === null || totalCount <= 0) {
+    return null;
+  }
+
+  const normalizedRemaining = Math.max(remainingCount, 0);
+  return {
+    remainingCount: normalizedRemaining,
+    totalCount,
+    remainingRatio: normalizedRemaining / totalCount,
+    window: "weekly",
+    modelName,
+  };
+}
+
+function pickLowestRemainingRatioCandidate(
+  candidates: QuotaRiskCandidate[],
+): QuotaRiskCandidate | null {
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  return candidates.reduce((lowest, candidate) => {
+    if (candidate.remainingRatio < lowest.remainingRatio) {
+      return candidate;
+    }
+    if (
+      candidate.remainingRatio === lowest.remainingRatio &&
+      candidate.remainingCount < lowest.remainingCount
+    ) {
+      return candidate;
+    }
+    return lowest;
+  }, candidates[0]);
+}
+
+function getLowestRemainingRatioCandidate(vm: UsageViewModel): QuotaRiskCandidate | null {
+  const candidates: QuotaRiskCandidate[] = [];
+
+  for (const model of vm.models) {
+    const candidate = buildCurrentQuotaRiskCandidate(
+      model.remainingCount,
+      model.totalCount,
+      model.name,
+    );
+    if (candidate) {
+      candidates.push(candidate);
+    }
+  }
+
+  if (candidates.length === 0) {
+    const candidate = buildCurrentQuotaRiskCandidate(
+      vm.remainingCount,
+      vm.totalCount,
+      vm.primaryModelName || vm.minRemainingModelName || "",
+    );
+    if (candidate) {
+      candidates.push(candidate);
+    }
+  }
+
+  const weeklyCandidate = buildWeeklyQuotaRiskCandidate(
+    vm.weeklyRemainingCount,
+    vm.weeklyTotalCount,
+    vm.primaryModelName || vm.minRemainingModelName || "",
+  );
+  if (weeklyCandidate) {
+    candidates.push(weeklyCandidate);
+  }
+
+  return pickLowestRemainingRatioCandidate(candidates);
+}
+
+function formatRatioForLog(ratio: number): string {
+  return `${(ratio * 100).toFixed(2)}%`;
+}
+
 function buildErrorViewModel(message: string, raw: unknown = null): UsageViewModel {
   return {
     ok: false,
@@ -1603,11 +1766,13 @@ function buildUsageViewModel(result: RemainsResult): UsageViewModel {
       usedCount,
     }];
   const riskSources: Array<{ name: string; remainingCount: number; window: "current" | "weekly" }> = [
-    ...riskSourceModels.map((model) => ({
-      name: model.name,
-      remainingCount: model.remainingCount,
-      window: "current" as const,
-    })),
+    ...riskSourceModels
+      .filter((model) => model.totalCount > 0)
+      .map((model) => ({
+        name: model.name,
+        remainingCount: model.remainingCount,
+        window: "current" as const,
+      })),
   ];
   if (hasWeeklyQuota) {
     riskSources.push({
@@ -1616,9 +1781,15 @@ function buildUsageViewModel(result: RemainsResult): UsageViewModel {
       window: "weekly",
     });
   }
-  const minRemainingModel = riskSources.reduce((minModel, currentModel) =>
-    currentModel.remainingCount < minModel.remainingCount ? currentModel : minModel,
-  riskSources[0]);
+  const minRemainingModel = riskSources.length > 0
+    ? riskSources.reduce((minModel, currentModel) =>
+      currentModel.remainingCount < minModel.remainingCount ? currentModel : minModel,
+    riskSources[0])
+    : {
+      name: primaryModel.model_name ?? strings.unknownModel,
+      remainingCount,
+      window: "current" as const,
+    };
 
   return {
     ok: result.ok,

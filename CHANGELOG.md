@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.0.12
+
+- 修复 VS Code 插件无 API Key 状态栏入口，点击直接打开 API Key 管理对话框。
+- 修复无 API Key 启动 500ms Toast 的“立即配置”入口，直接打开 API Key 管理对话框。
+- 修复配额字段映射，`usage_count` 按已使用次数处理，剩余次数由总配额减已使用计算。
+- 补齐 API Key 管理表头和操作按钮国际化。
+- 补齐 VS Code webview 新增/编辑 API Key 时的国内/国际版 API endpoint 选择和保存链路。
+- 统一风险弹窗规则：当前周期或本周资源剩余量比例低于 10% 时触发，弹窗保留并显示剩余/总量/比例。
+
 ## 0.0.11
 
 - 修复风险告警误报：将当前窗口和每周配额分开判断，避免每周剩余低时误报为当前窗口耗尽

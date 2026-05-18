@@ -3,7 +3,7 @@
   "displayName": "%extension.displayName%",
   "description": "%extension.description%",
   "icon": "images/icon.png",
-  "version": "0.0.11",
+  "version": "0.0.12",
   "publisher": "decard",
   "license": "MIT",
   "repository": {
@@ -22,6 +22,7 @@
     "onCommand:minimaxUsage.showDetails",
     "onCommand:minimaxUsage.refresh",
     "onCommand:minimaxUsage.setApiKey",
+    "onCommand:minimaxUsage.manageApiKeys",
     "onCommand:minimaxUsage.clearApiKey",
     "onCommand:minimaxUsage.copyRawResponse",
     "onCommand:minimaxUsage.addApiKey",

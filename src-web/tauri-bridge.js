@@ -18,6 +18,7 @@
   var invokeId = 0;
   var pendingInvokes = {};
   var eventListeners = {};
+  var queuedEvents = {};
 
   window.addEventListener('message', function (event) {
     var msg = event.data;
@@ -44,6 +45,9 @@
             console.error('[tauri-bridge] event listener error:', e);
           }
         }
+      } else {
+        if (!queuedEvents[msg.name]) queuedEvents[msg.name] = [];
+        queuedEvents[msg.name].push(msg.payload);
       }
     }
   });
@@ -72,6 +76,20 @@
       eventListeners[eventName] = [];
     }
     eventListeners[eventName].push(callback);
+
+    var queued = queuedEvents[eventName];
+    if (queued && queued.length > 0) {
+      delete queuedEvents[eventName];
+      setTimeout(function () {
+        queued.forEach(function (payload) {
+          try {
+            callback({ payload: payload });
+          } catch (e) {
+            console.error('[tauri-bridge] queued event listener error:', e);
+          }
+        });
+      }, 0);
+    }
 
     return Promise.resolve(function () {
       var list = eventListeners[eventName];

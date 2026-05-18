@@ -6,9 +6,12 @@ const transientDialogIds = [
   'key-edit-dialog',
 ];
 const DIALOG_OPEN_ATTR = 'data-minimax-dialog-open';
+const RISK_REMAINING_RATIO_THRESHOLD = 0.10;
+const CRITICAL_REMAINING_RATIO_THRESHOLD = 0.05;
 
 let uiReady = false;
 let modalOpenIntentDepth = 0;
+let pendingKeyManagementOpen = false;
 
 function withUserModalIntent(action) {
   console.log('[withUserModalIntent] uiReady:', uiReady, 'visibility:', document.visibilityState, 'hasFocus:', document.hasFocus ? document.hasFocus() : 'N/A');
@@ -45,11 +48,14 @@ function runTrustedModalAction(event, action) {
 function runSystemModalAction(action, retries = 3) {
   const hasFocus = typeof document.hasFocus === 'function' ? document.hasFocus() : true;
   console.log('[runSystemModalAction] uiReady:', uiReady, 'visibility:', document.visibilityState, 'hasFocus:', hasFocus, 'retries:', retries);
-  if (!uiReady) {
+  if (!uiReady || state?.isBooting) {
     console.log('[runSystemModalAction] REJECTED: uiReady is false');
+    if (retries > 0) {
+      setTimeout(() => runSystemModalAction(action, retries - 1), 120);
+    }
     return;
   }
-  if (document.visibilityState !== 'visible' || !hasFocus) {
+  if (document.visibilityState !== 'visible') {
     if (retries > 0) {
       setTimeout(() => runSystemModalAction(action, retries - 1), 80);
       return;
@@ -93,6 +99,15 @@ function closeTransientDialogs() {
 
 window.__MINIMAX_CLOSE_TRANSIENT_DIALOGS__ = closeTransientDialogs;
 closeTransientDialogs();
+
+function requestKeyManagementModal() {
+  pendingKeyManagementOpen = true;
+  runSystemModalAction(() => {
+    if (!pendingKeyManagementOpen) return;
+    pendingKeyManagementOpen = false;
+    showKeyManagementModal();
+  }, 12);
+}
 
 // Global error handler
 window.onerror = function(msg, url, line, col, error) {
@@ -234,10 +249,9 @@ const i18n = {
     syncUnavailable: '同步失败，页面保持可用',
     syncData: '刷新数据',
     keyConfig: '配置密钥',
-    reset: '清除缓存',
     riskTitle: '风险提示',
-    riskRemaining: '最小剩余请求次数仅 ',
-    riskRemainingWeekly: '本周最小剩余请求次数仅 ',
+    riskRemaining: '当前周期剩余请求次数仅 ',
+    riskRemainingWeekly: '本周剩余请求次数仅 ',
     riskExhausted: '额度即将耗尽，建议立即降低请求频率或切换模型！',
     riskFast: '消耗较快，请注意使用配额以避免被限流。',
     languageSwitchLabel: '语言',
@@ -249,9 +263,19 @@ const i18n = {
     unknown: '未知',
     keyManagement: 'API Key 管理',
     keyName: '名称',
+    keyNameTime: '名称 / 时间',
+    keyMask: '密钥掩码',
+    keyActions: '编辑 / 删除',
     keyColor: '颜色',
     keyRefresh: '刷新间隔（秒）',
     apiKey: 'API Key',
+    noApiKeysConfigured: '暂无 API Key。',
+    editAction: '编辑',
+    deleteAction: '删除',
+    addApiKeyTitle: '新增 API Key',
+    editApiKeyTitle: '编辑 API Key',
+    deleteKeyTitle: '删除 API Key？',
+    deleteKeyMessage: '该操作无法撤销。',
     keyRegion: '区域',
     regionDomestic: '国内 (minimaxi.com)',
     regionOverseas: '海外 (minimax.io)',
@@ -332,10 +356,9 @@ const i18n = {
     syncUnavailable: 'Sync failed, page remains available',
     syncData: 'SYNC DATA',
     keyConfig: 'KEY CONFIG',
-    reset: 'RESET',
     riskTitle: 'Risk Warning',
-    riskRemaining: 'Minimum remaining requests only ',
-    riskRemainingWeekly: 'Minimum weekly remaining requests only ',
+    riskRemaining: 'Current window remaining requests only ',
+    riskRemainingWeekly: 'Weekly remaining requests only ',
     riskExhausted: 'Quota is almost exhausted. Suggest lowering request frequency or switching models!',
     riskFast: 'Consuming quickly. Please monitor usage to avoid rate limits.',
     languageSwitchLabel: 'Language',
@@ -347,9 +370,19 @@ const i18n = {
     unknown: 'Unknown',
     keyManagement: 'API Key Management',
     keyName: 'Name',
+    keyNameTime: 'Name / Time',
+    keyMask: 'Key Mask',
+    keyActions: 'Edit / Delete',
     keyColor: 'Color',
     keyRefresh: 'Refresh Interval (seconds)',
     apiKey: 'API Key',
+    noApiKeysConfigured: 'No API keys configured.',
+    editAction: 'Edit',
+    deleteAction: 'Delete',
+    addApiKeyTitle: 'Add API Key',
+    editApiKeyTitle: 'Edit API Key',
+    deleteKeyTitle: 'Delete API Key?',
+    deleteKeyMessage: 'This action cannot be undone.',
     keyRegion: 'Region',
     regionDomestic: 'Domestic (minimaxi.com)',
     regionOverseas: 'Overseas (minimax.io)',
@@ -517,6 +550,9 @@ async function init() {
     state.isLoading = false;
     render();
     closeTransientDialogs();
+    if (pendingKeyManagementOpen) {
+      requestKeyManagementModal();
+    }
 
     runInBackground('loadSettings', async () => {
       await loadSettings();
@@ -578,7 +614,7 @@ async function setupEventListeners() {
 
   // Listen for show key management modal event (from tray menu)
   await tauriListen('show-key-management', () => {
-    runSystemModalAction(showKeyManagementModal);
+    requestKeyManagementModal();
   });
 
   // Reset transient UI whenever the native shell is about to reveal the window.
@@ -642,7 +678,7 @@ function setupUiHandlers() {
   // Set API Key button - 直接调用，打开对话框
   document.getElementById('btn-set-key')?.addEventListener('click', (e) => {
     console.log('[btn-set-key] clicked');
-    runTrustedModalAction(e, showApiKeyDialog);
+    runTrustedModalAction(e, showKeyManagementModal);
   });
 
   // Retry sync button
@@ -653,7 +689,7 @@ function setupUiHandlers() {
 
   // Edit key button
   document.getElementById('btn-edit-key')?.addEventListener('click', (e) => {
-    runTrustedModalAction(e, showApiKeyDialog);
+    runTrustedModalAction(e, showKeyManagementModal);
   });
 
   // Refresh button
@@ -664,9 +700,6 @@ function setupUiHandlers() {
     console.log('[btn-config-key] clicked');
     runTrustedModalAction(e, showKeyManagementModal);
   });
-
-  // Clear cache button
-  document.getElementById('btn-clear-cache')?.addEventListener('click', clearApiKey);
 
   // Language toggle
   document.getElementById('langToggleBtn')?.addEventListener('click', toggleLanguage);
@@ -860,24 +893,6 @@ async function saveApiKey() {
   } catch (error) {
     console.error('Save API key error:', error);
     alert(state.language === 'zh-CN' ? '保存失败: ' + error : 'Failed to save: ' + error);
-  }
-}
-
-async function clearApiKey() {
-  if (!tauriInvoke) return;
-
-  if (!confirm(state.language === 'zh-CN' ? 'Clear all API keys and data?' : 'Clear all API keys and data?')) return;
-
-  try {
-    // Delete all keys
-    for (const key of state.apiKeys) {
-      await invokeWithTimeout('cmd_delete_api_key', { id: key.id }, WRITE_IPC_TIMEOUT_MS);
-    }
-    state.apiKeys = [];
-    state.usageData = {};
-    scheduleRender();
-  } catch (error) {
-    console.error('Clear API key error:', error);
   }
 }
 
@@ -1248,24 +1263,23 @@ function renderAggregateView() {
     setElementAttr(document.getElementById('weekly-countdown'), 'data-timestamp', m.earliestWeeklyReset);
   }
 
-  // Risk alert (aggregate: minimum remaining among visible keys)
+  // Risk alert (aggregate: lowest remaining quota ratio among visible keys)
   const riskCard = document.getElementById('risk-alert-card');
   const candidates = [];
   visibleKeys.forEach(key => {
     const data = state.usageData[key.id];
     if (!data || !data.ok) return;
-    if (typeof data.remaining_count === 'number') candidates.push({ remaining: data.remaining_count, kind: 'current' });
-    if (typeof data.weekly_remaining_count === 'number') candidates.push({ remaining: data.weekly_remaining_count, kind: 'weekly' });
+    candidates.push(...getQuotaRiskCandidates(data));
   });
   const minEntry = candidates.length > 0
-    ? candidates.reduce((a, b) => (a.remaining < b.remaining ? a : b), candidates[0])
+    ? pickLowestRemainingRatioCandidate(candidates)
     : null;
 
-  if (minEntry && minEntry.remaining <= 20 && riskCard) {
-    const isCritical = minEntry.remaining <= 5;
+  if (minEntry && minEntry.remainingRatio < RISK_REMAINING_RATIO_THRESHOLD && riskCard) {
+    const isCritical = minEntry.remainingRatio <= CRITICAL_REMAINING_RATIO_THRESHOLD;
     const labelKey = minEntry.kind === 'weekly' ? 'riskRemainingWeekly' : 'riskRemaining';
     setText('risk-window-label', t(labelKey));
-    setText('risk-remaining-percent', String(minEntry.remaining));
+    setText('risk-remaining-percent', formatRemainingQuota(minEntry));
     setText('risk-message', t(isCritical ? 'riskExhausted' : 'riskFast'));
     setElementClass(document.getElementById('risk-icon'), 'risk-icon');
     document.getElementById('risk-icon').textContent = isCritical ? '🚨' : '⚠️';
@@ -1503,10 +1517,12 @@ function renderSingleKeyView(keyId) {
   }
 
   const riskCard = document.getElementById('risk-alert-card');
-  if (data && data.ok && typeof data.remaining_count === 'number' && data.remaining_count <= 20) {
-    const isCritical = data.remaining_count <= 5;
-    setText('risk-window-label', t('riskRemaining'));
-    setText('risk-remaining-percent', String(data.remaining_count));
+  const riskEntry = data && data.ok ? pickLowestRemainingRatioCandidate(getQuotaRiskCandidates(data)) : null;
+  if (riskEntry && riskEntry.remainingRatio < RISK_REMAINING_RATIO_THRESHOLD && riskCard) {
+    const isCritical = riskEntry.remainingRatio <= CRITICAL_REMAINING_RATIO_THRESHOLD;
+    const labelKey = riskEntry.kind === 'weekly' ? 'riskRemainingWeekly' : 'riskRemaining';
+    setText('risk-window-label', t(labelKey));
+    setText('risk-remaining-percent', formatRemainingQuota(riskEntry));
     setText('risk-message', t(isCritical ? 'riskExhausted' : 'riskFast'));
     document.getElementById('risk-icon').textContent = isCritical ? '🚨' : '⚠️';
     setElementClass(riskCard, `cyber-card risk-alert ${isCritical ? 'critical' : 'warning'}`);
@@ -1877,6 +1893,11 @@ function formatNumber(value) {
   return new Intl.NumberFormat().format(value);
 }
 
+function formatRemainingQuota(entry) {
+  if (!entry) return '-';
+  return `${formatNumber(entry.remaining)}/${formatNumber(entry.total)} (${Math.round(entry.remainingRatio * 100)}%)`;
+}
+
 // ── multi-key helpers ───────────────────────────────────────────────────────
 
 function getVisibleKeys() {
@@ -1939,6 +1960,44 @@ function percentFromUsage(data, usedField, totalField, percentField) {
     return 0;
   }
   return clampPercent((used / total) * 100);
+}
+
+function getQuotaRiskCandidates(data) {
+  if (!data || !data.ok) return [];
+
+  const candidates = [];
+  const addCandidate = (remaining, total, kind) => {
+    if (typeof remaining !== 'number' || typeof total !== 'number' || total <= 0) {
+      return;
+    }
+    const normalizedRemaining = Math.max(0, remaining);
+    candidates.push({
+      remaining: normalizedRemaining,
+      total,
+      remainingRatio: normalizedRemaining / total,
+      kind,
+    });
+  };
+
+  addCandidate(data.remaining_count, data.total_count, 'current');
+  addCandidate(data.weekly_remaining_count, data.weekly_total_count, 'weekly');
+
+  return candidates;
+}
+
+function pickLowestRemainingRatioCandidate(candidates) {
+  if (!Array.isArray(candidates) || candidates.length === 0) return null;
+
+  return candidates.reduce((lowest, candidate) => {
+    if (candidate.remainingRatio < lowest.remainingRatio) return candidate;
+    if (
+      candidate.remainingRatio === lowest.remainingRatio &&
+      candidate.remaining < lowest.remaining
+    ) {
+      return candidate;
+    }
+    return lowest;
+  }, candidates[0]);
 }
 
 function formatMetricScale(percent) {
@@ -2107,7 +2166,7 @@ function renderKeyList() {
 
   if (state.apiKeys.length === 0) {
     container.innerHTML = `<div class="empty-state" style="display: block; margin: 0; padding: 40px 20px;">
-      <p style="margin: 0;">No API keys configured.</p>
+      <p style="margin: 0;">${escapeHtml(t('noApiKeysConfigured'))}</p>
     </div>`;
     return;
   }
@@ -2126,8 +2185,8 @@ function renderKeyList() {
       <td><span class="key-mask">${escapeHtml(key.masked_key || '--')}</span></td>
       <td class="key-table-actions">
         <div class="key-row-actions">
-          <button class="key-action-button edit js-edit-key" data-key-id="${escapeHtml(key.id)}">Edit</button>
-          <button class="key-action-button delete js-delete-key" data-key-id="${escapeHtml(key.id)}">Delete</button>
+          <button class="key-action-button edit js-edit-key" data-key-id="${escapeHtml(key.id)}">${escapeHtml(t('editAction'))}</button>
+          <button class="key-action-button delete js-delete-key" data-key-id="${escapeHtml(key.id)}">${escapeHtml(t('deleteAction'))}</button>
         </div>
       </td>
     </tr>
@@ -2137,9 +2196,9 @@ function renderKeyList() {
     <table class="key-table">
       <thead>
         <tr>
-          <th class="key-table-name">Key_Name Time</th>
-          <th class="key-table-mask">Key Mask</th>
-          <th class="key-table-actions">Edit/Delete</th>
+          <th class="key-table-name">${escapeHtml(t('keyNameTime'))}</th>
+          <th class="key-table-mask">${escapeHtml(t('keyMask'))}</th>
+          <th class="key-table-actions">${escapeHtml(t('keyActions'))}</th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
@@ -2170,7 +2229,7 @@ function openKeyEditDialog(keyId = null) {
     // Edit mode
     const key = state.apiKeys.find(k => k.id === keyId);
     if (key) {
-      title.textContent = state.language === 'zh-CN' ? 'Edit API Key' : 'Edit API Key';
+      title.textContent = t('editApiKeyTitle');
       idInput.value = key.id;
       nameInput.value = key.name;
       colorInput.value = key.color;
@@ -2183,7 +2242,7 @@ function openKeyEditDialog(keyId = null) {
     }
   } else {
     // Add mode
-    title.textContent = state.language === 'zh-CN' ? 'Add API Key' : 'Add API Key';
+    title.textContent = t('addApiKeyTitle');
     idInput.value = '';
     nameInput.value = '';
     colorInput.value = '#00d4ff';
@@ -2331,8 +2390,8 @@ async function deleteKey(keyId) {
   // 使用自定义确认框而不是 confirm()
   return new Promise((resolve) => {
     showConfirmDialog(
-      'Delete API Key?',
-      'This action cannot be undone.',
+      t('deleteKeyTitle'),
+      t('deleteKeyMessage'),
       async (confirmed) => {
         console.log('[deleteKey] Confirm result:', confirmed);
         
