@@ -1,5 +1,5 @@
 {
-  "extension.displayName": "MiniMax 用量状态栏",
+  "extension.displayName": "MiniMax Usage Monitor",
   "extension.description": "查询 MiniMax Token Plan 用量，并在 VS Code 状态栏中显示详细统计。",
   "command.refresh.title": "MiniMax 用量：刷新",
   "command.showDetails.title": "MiniMax 用量：查看详情",

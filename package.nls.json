@@ -1,5 +1,5 @@
 {
-  "extension.displayName": "MiniMax Usage StatusBar",
+  "extension.displayName": "MiniMax Usage Monitor",
   "extension.description": "Query MiniMax Token Plan usage and show detailed stats in the VS Code status bar.",
   "command.refresh.title": "MiniMax Usage: Refresh",
   "command.showDetails.title": "MiniMax Usage: Show Details",

@@ -327,7 +327,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   await loadMultiKeyState();
 
   // Welcome prompt when no API keys are configured
-  await showWelcomeIfNoKeys();
+  // Fire-and-forget with a slight delay to let VS Code finish initialization
+  setTimeout(() => {
+    showWelcomeIfNoKeys();
+  }, 1000);
 
   registerCommands(context);
 
@@ -1389,7 +1392,7 @@ async function showWelcomeIfNoKeys(): Promise<void> {
   const strings = getRuntimeStrings();
   const choice = await vscode.window.showInformationMessage(
     strings.welcomeTitle,
-    { modal: false },
+    { modal: true },
     strings.welcomeConfigure,
     strings.welcomeLater,
   );
