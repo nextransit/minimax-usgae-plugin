@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.0.13
+
+- Open-VSX 使用独立 namespace `benpay` 发布
+- README 双语化，桌面版下载链接移至核心功能首位
+
 ## 0.0.12
 
 - 修复 VS Code 插件无 API Key 状态栏入口，点击直接打开 API Key 管理对话框。

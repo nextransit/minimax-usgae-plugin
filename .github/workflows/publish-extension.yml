@@ -45,7 +45,7 @@ jobs:
         run: npx @vscode/vsce package -o minimax-openvsx.vsix
 
       - name: Publish to Open-VSX
-        run: npx ovsx publish minimax-openvsx.vsix -p ${{ secrets.OVSX_PAT }}
+        run: npx ovsx publish minimax-openvsx.vsix -p ${{ secrets.OVSX_PAT }} --skip-duplicate
         continue-on-error: true
 
       - name: Restore publisher
