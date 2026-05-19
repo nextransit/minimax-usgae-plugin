@@ -159,6 +159,9 @@ jobs:
           | Windows | x86_64 | NSIS Installer |
           EOF
 
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Create Release
         run: |
           gh release delete ${{ github.ref_name }} --yes --cleanup-tag 2>/dev/null || true
