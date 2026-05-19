@@ -139,29 +139,34 @@ jobs:
       - name: Display artifacts
         run: find artifacts -type f -ls
 
+      - name: Write release notes
+        run: |
+          cat > release-notes.md << EOF
+          ## MiniMax Usage Monitor ${GITHUB_REF_NAME}
+
+          本发布包含 VS Code 插件的同源前端版本。同时提供桌面版安装包。
+
+          ### VS Code 插件
+          在 VS Code 扩展商店搜索 \`decard.minimax-usage-statusbar\` 安装。
+
+          ### 桌面版下载
+
+          | 平台 | 架构 | 格式 |
+          |------|------|------|
+          | macOS | ARM64 (Apple Silicon) | DMG |
+          | macOS | x86_64 (Intel) | DMG |
+          | Linux | x86_64 | AppImage / deb / rpm |
+          | Windows | x86_64 | NSIS Installer |
+          EOF
+
       - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          name: "MiniMax Usage Monitor ${{ github.ref_name }}"
-          body: |
-            ## MiniMax Usage Monitor ${{ github.ref_name }}
-
-            本发布包含 VS Code 插件的同源前端版本。同时提供桌面版安装包。
-
-            ### VS Code 插件
-            在 VS Code 扩展商店搜索 `decard.minimax-usage-statusbar` 安装。
-
-            ### 桌面版下载
-
-            | 平台 | 架构 | 格式 |
-            |------|------|------|
-            | macOS | ARM64 (Apple Silicon) | DMG |
-            | macOS | x86_64 (Intel) | DMG |
-            | Linux | x86_64 | AppImage / deb / rpm |
-            | Windows | x86_64 | NSIS Installer |
-          draft: false
-          prerelease: false
-          files: artifacts/**/*
+        run: |
+          gh release create ${{ github.ref_name }} artifacts/**/* \
+            --title "MiniMax Usage Monitor ${{ github.ref_name }}" \
+            --notes-file release-notes.md \
+            --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - name: Generate update.json
         run: node scripts/generate-update-json.js
