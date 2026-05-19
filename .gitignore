@@ -8,13 +8,13 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
-docs/Vscode*.md
+docs/
 CLAUDE.md
 ISSUES.md
-docs/plans/
 .worktree/
 .worktrees/
 .env.github
+.env.remote
+.env.windows
+.vscode/
 src-tauri/target/
-docs/superpowers/
-docs/plans/.worktrees/
