@@ -80,7 +80,7 @@ pub struct ApiKeyEntry {
     pub created_at: i64,          // Unix timestamp
     pub is_active: bool,          // Whether this key is used
     #[serde(default = "default_endpoint")]
-    pub endpoint: String,        // "domestic" (default) | "overseas"
+    pub endpoint: String, // "domestic" (default) | "overseas"
 }
 
 fn default_endpoint() -> String {

@@ -517,14 +517,9 @@ pub async fn cmd_refresh_all_usage_data(
 
 #[tauri::command]
 pub async fn cmd_check_update(app: AppHandle) -> Result<String, String> {
-    let updater = app
-        .updater()
-        .map_err(|e| e.to_string())?;
+    let updater = app.updater().map_err(|e| e.to_string())?;
 
-    let update = updater
-        .check()
-        .await
-        .map_err(|e| e.to_string())?;
+    let update = updater.check().await.map_err(|e| e.to_string())?;
 
     match update {
         Some(update) => {
@@ -536,7 +531,10 @@ pub async fn cmd_check_update(app: AppHandle) -> Result<String, String> {
             // Background download, don't block response
             let version_for_log = version.clone();
             tauri::async_runtime::spawn(async move {
-                match update.download_and_install(|_chunk, _total| {}, || {}).await {
+                match update
+                    .download_and_install(|_chunk, _total| {}, || {})
+                    .await
+                {
                     Ok(_) => {
                         log::info!(
                             "Manual update: v{} downloaded, will install on next restart",

@@ -596,8 +596,14 @@ pub fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
         MenuItem::with_id(&app_handle, "set_key", i18n.set_key, true, None::<&str>).unwrap();
     let clear_key_item =
         MenuItem::with_id(&app_handle, "clear_key", i18n.clear_key, true, None::<&str>).unwrap();
-    let check_update_item =
-        MenuItem::with_id(&app_handle, "check_update", i18n.check_update, true, None::<&str>).unwrap();
+    let check_update_item = MenuItem::with_id(
+        &app_handle,
+        "check_update",
+        i18n.check_update,
+        true,
+        None::<&str>,
+    )
+    .unwrap();
     let quit_item = MenuItem::with_id(&app_handle, "quit", i18n.quit, true, None::<&str>).unwrap();
 
     let menu = Menu::with_items(
@@ -667,7 +673,8 @@ pub fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                         let app_h_clone = app_h.clone();
                         let key_id_clone = key_id.clone();
                         tauri::async_runtime::spawn(async move {
-                            match crate::api::fetch_minimax_usage(&api_key, 15000, &endpoint).await {
+                            match crate::api::fetch_minimax_usage(&api_key, 15000, &endpoint).await
+                            {
                                 Ok(data) => {
                                     let state: State<AppState> = app_h_clone.state();
                                     {

@@ -209,8 +209,8 @@ async fn refresh_usage_data(
                     );
                 }
 
-                if let Some(risk) =
-                    risk_candidate.filter(|risk| risk.remaining_ratio < RISK_REMAINING_RATIO_THRESHOLD)
+                if let Some(risk) = risk_candidate
+                    .filter(|risk| risk.remaining_ratio < RISK_REMAINING_RATIO_THRESHOLD)
                 {
                     let key_name = {
                         let config = state.config.lock().unwrap();
@@ -435,7 +435,10 @@ pub fn run() {
                                 "Auto-update: found new version v{}, downloading...",
                                 update.version
                             );
-                            match update.download_and_install(|_chunk, _total| {}, || {}).await {
+                            match update
+                                .download_and_install(|_chunk, _total| {}, || {})
+                                .await
+                            {
                                 Ok(_) => {
                                     log::info!(
                                         "Auto-update: v{} downloaded, will install on next restart",

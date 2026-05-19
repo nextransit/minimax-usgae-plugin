@@ -69,10 +69,11 @@ pub async fn fetch_minimax_usage(
 ) -> Result<UsageData, Box<dyn std::error::Error + Send + Sync>> {
     let api_key = api_key.to_string();
     let url = resolve_endpoint(endpoint);
-    let payload =
-        tokio::task::spawn_blocking(move || fetch_minimax_payload_blocking(&api_key, timeout_ms, &url))
-            .await
-            .map_err(|e| format!("MiniMax request task failed: {}", e))??;
+    let payload = tokio::task::spawn_blocking(move || {
+        fetch_minimax_payload_blocking(&api_key, timeout_ms, &url)
+    })
+    .await
+    .map_err(|e| format!("MiniMax request task failed: {}", e))??;
 
     let business_status_code = payload
         .status_code
