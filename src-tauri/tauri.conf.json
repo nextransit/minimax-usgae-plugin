@@ -16,7 +16,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "MiniMax Usage Monitor",
+        "title": "MiniMax Monitor",
         "width": 900,
         "height": 700,
         "minWidth": 600,

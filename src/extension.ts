@@ -173,8 +173,8 @@ function getRuntimeStrings(config: ExtensionConfig = readConfig()) {
   return {
     language,
     isEn,
-    outputChannelName: "MiniMax Usage",
-    inputBoxTitle: "MiniMax Usage",
+    outputChannelName: "MiniMax Monitor",
+    inputBoxTitle: "MiniMax Monitor",
     inputBoxPrompt: isEn ? "Enter MiniMax API Key" : "输入 MiniMax API Key",
     inputBoxPlaceholder: "API Key",
     infoApiKeySaved: isEn ? "MiniMax API key saved" : "MiniMax API Key 已保存",
@@ -182,12 +182,12 @@ function getRuntimeStrings(config: ExtensionConfig = readConfig()) {
     infoRawCopied: isEn ? "MiniMax raw response copied to clipboard" : "MiniMax 原始响应已复制到剪贴板",
     welcomeTitle:
       isEn
-        ? "Welcome to MiniMax Usage Monitor! Configure your access token to get started. Multiple API keys are supported."
-        : "欢迎使用 MiniMax Usage Monitor！需要配置您的访问令牌才能开始使用。可以设置多个 API KEY。",
+        ? "Welcome to MiniMax Monitor! Configure your access token to get started. Multiple API keys are supported."
+        : "欢迎使用 MiniMax Monitor！需要配置您的访问令牌才能开始使用。可以设置多个 API KEY。",
     welcomeConfigure: isEn ? "Configure Now" : "立即配置",
     welcomeLater: isEn ? "Later" : "稍后设置",
     warnNoRawResponse: isEn ? "There is no raw response to copy yet" : "当前没有可复制的原始响应",
-    warnSetApiKeyFirst: isEn ? "Please run \"MiniMax Usage: Set API Key\" first" : "请先运行 “MiniMax Usage: Set API Key”",
+    warnSetApiKeyFirst: isEn ? "Please run \"MiniMax Monitor: Set API Key\" first" : "请先运行 “MiniMax Monitor: Set API Key”",
     warnRiskLowQuota:
       isEn
         ? "MiniMax risk warning: current window has only "
@@ -224,7 +224,7 @@ function getRuntimeStrings(config: ExtensionConfig = readConfig()) {
     actionSetApiKey: isEn ? "Set API Key" : "设置 API Key",
     actionClearKey: isEn ? "Clear Key" : "清除 Key",
     actionCopyRaw: isEn ? "Copy raw response" : "复制原始响应",
-    detailsPanelTitle: isEn ? "MiniMax Usage Details" : "MiniMax 用量详情",
+    detailsPanelTitle: isEn ? "MiniMax Monitor Details" : "MiniMax Monitor 详情",
     detailTooltipHeading: isEn ? "MiniMax Token Plan Details" : "MiniMax Token Plan 详细信息",
     detailStatus: isEn ? "Status" : "状态",
     detailPrimaryModel: isEn ? "Primary model" : "主模型",

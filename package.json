@@ -1,5 +1,5 @@
 {
-  "name": "minimax-usage-statusbar",
+  "name": "minimax-monitor",
   "displayName": "%extension.displayName%",
   "description": "%extension.description%",
   "icon": "images/icon.png",
@@ -181,7 +181,8 @@
     "tauri:build:ci": "tauri build --ci --no-sign",
     "tauri:info": "tauri info",
     "tauri:build:linux:remote": "bash scripts/remote-linux-build.sh",
-    "publish": "vsce publish"
+    "publish": "vsce publish",
+    "publish:marketplace": "node scripts/publish-marketplace.cjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.10.1",

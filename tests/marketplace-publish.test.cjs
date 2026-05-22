@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const {
   buildExpectedTag,
   collectReleaseErrors,
+  maskPatForLog,
 } = require("../scripts/publish-marketplace.cjs");
 
 test("buildExpectedTag derives the Git tag from package version", () => {
@@ -51,4 +52,23 @@ test("collectReleaseErrors reports missing publisher and PAT", () => {
       "VSCE_PAT is required for Marketplace publishing.",
     ],
   );
+});
+
+test("collectReleaseErrors allows dry-run validation without PAT", () => {
+  assert.deepEqual(
+    collectReleaseErrors({
+      version: "0.0.7",
+      tag: "",
+      publisher: "decard",
+      pat: "",
+      requireTagMatch: false,
+      requirePat: false,
+    }),
+    [],
+  );
+});
+
+test("maskPatForLog hides PAT values in dry-run output", () => {
+  assert.equal(maskPatForLog("secret"), "***");
+  assert.equal(maskPatForLog(""), "");
 });

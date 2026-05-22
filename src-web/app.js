@@ -1,4 +1,4 @@
-// MiniMax Usage Monitor - Tauri Frontend
+// MiniMax Monitor - Tauri Frontend
 
 const transientDialogIds = [
   'api-key-dialog',
@@ -255,7 +255,7 @@ const i18n = {
     riskExhausted: '额度即将耗尽，建议立即降低请求频率或切换模型！',
     riskFast: '消耗较快，请注意使用配额以避免被限流。',
     languageSwitchLabel: '语言',
-    inputBoxTitle: 'MiniMax Usage',
+    inputBoxTitle: 'MiniMax Monitor',
     inputBoxPrompt: '输入 MiniMax API Key',
     cancel: '取消',
     save: '保存',
@@ -362,7 +362,7 @@ const i18n = {
     riskExhausted: 'Quota is almost exhausted. Suggest lowering request frequency or switching models!',
     riskFast: 'Consuming quickly. Please monitor usage to avoid rate limits.',
     languageSwitchLabel: 'Language',
-    inputBoxTitle: 'MiniMax Usage',
+    inputBoxTitle: 'MiniMax Monitor',
     inputBoxPrompt: 'Enter MiniMax API Key',
     cancel: 'Cancel',
     save: 'Save',

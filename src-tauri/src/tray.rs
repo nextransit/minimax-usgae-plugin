@@ -631,7 +631,7 @@ pub fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 
     let mut tray_builder = TrayIconBuilder::new()
         .menu(&menu)
-        .tooltip("MiniMax Usage Monitor")
+        .tooltip("MiniMax Monitor")
         .show_menu_on_left_click(false);
 
     if let Some(icon) = resolve_tray_icon(app, &state) {

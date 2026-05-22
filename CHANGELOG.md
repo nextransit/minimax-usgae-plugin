@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## 0.0.13
 
+- VS Code Marketplace 扩展标识改为 `decard.minimax-monitor`
 - Open-VSX 使用独立 namespace `benpay` 发布
 - README 双语化，桌面版下载链接移至核心功能首位
 

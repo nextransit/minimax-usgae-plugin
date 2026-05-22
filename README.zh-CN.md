@@ -1,4 +1,4 @@
-# MiniMax Usage Monitor
+# MiniMax Monitor
 
 [English](./README.md) | [简体中文](./README.zh-CN.md)
 
@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://marketplace.visualstudio.com/items?itemName=decard.minimax-usage-statusbar">
+  <a href="https://marketplace.visualstudio.com/items?itemName=decard.minimax-monitor">
     <img src="https://img.shields.io/badge/VS%20Code-007ACC?style=flat-square&logo=visual-studio-code" alt="VS Code" />
   </a>
   <a href="https://github.com/nextransit/minimax-usage-plugin/releases/latest">
@@ -71,11 +71,11 @@
 
 **方式一：VS Code 市场**
 1. 打开 VS Code。
-2. 搜索 `MiniMax Usage`。
+2. 搜索 `MiniMax Monitor`。
 3. 点击安装。
 
 **方式二：Open VSX**
-- [open-vsx.org](https://open-vsx.org/extension/decard/minimax-usage-statusbar)
+- [open-vsx.org](https://open-vsx.org/extension/benpay/minimax-monitor)
 
 **方式三：手动安装 VSIX**
 1. 下载最新 `.vsix` 文件。
@@ -98,11 +98,11 @@
 ### VS Code 插件
 
 1. 使用 `Ctrl/Cmd + Shift + P` 打开命令面板。
-2. 运行 `MiniMax Usage: Set API Key`。
+2. 运行 `MiniMax Monitor: Set API Key`。
 3. 输入您的 MiniMax API Key。
 4. 按 `Enter` 确认。
 
-如需管理多个 Key，可使用 `MiniMax Usage: Add API Key`。
+如需管理多个 Key，可使用 `MiniMax Monitor: Add API Key`。
 
 ### 桌面版
 
@@ -126,13 +126,13 @@
 
 | 命令 | 说明 |
 |------|------|
-| `MiniMax Usage: Show Details` | 打开详情面板 |
-| `MiniMax Usage: Set API Key` | 设置主 API Key |
-| `MiniMax Usage: Add API Key` | 添加新的 API Key |
-| `MiniMax Usage: Refresh` | 刷新当前选中项 |
-| `MiniMax Usage: Refresh All Keys` | 刷新所有启用的 Key |
-| `MiniMax Usage: Switch API Key` | 切换当前选中 Key |
-| `MiniMax Usage: Clear API Key` | 清除所有已保存 Key |
+| `MiniMax Monitor: Show Details` | 打开详情面板 |
+| `MiniMax Monitor: Set API Key` | 设置主 API Key |
+| `MiniMax Monitor: Add API Key` | 添加新的 API Key |
+| `MiniMax Monitor: Refresh` | 刷新当前选中项 |
+| `MiniMax Monitor: Refresh All Keys` | 刷新所有启用的 Key |
+| `MiniMax Monitor: Switch API Key` | 切换当前选中 Key |
+| `MiniMax Monitor: Clear API Key` | 清除所有已保存 Key |
 
 ---
 

@@ -179,7 +179,7 @@ function main() {
 
   const updateJson = {
     version,
-    notes: notes || `MiniMax Usage Monitor v${version}`,
+    notes: notes || `MiniMax Monitor v${version}`,
     pub_date: new Date().toISOString(),
     platforms,
   };

@@ -1,4 +1,4 @@
-# MiniMax Usage Monitor
+# MiniMax Monitor
 
 [English](./README.md) | [简体中文](./README.zh-CN.md)
 
@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://marketplace.visualstudio.com/items?itemName=decard.minimax-usage-statusbar">
+  <a href="https://marketplace.visualstudio.com/items?itemName=decard.minimax-monitor">
     <img src="https://img.shields.io/badge/VS%20Code-007ACC?style=flat-square&logo=visual-studio-code" alt="VS Code" />
   </a>
   <a href="https://github.com/nextransit/minimax-usage-plugin/releases/latest">
@@ -71,11 +71,11 @@ The status bar shows the selected key's current usage percentage and can optiona
 
 **Option 1: VS Code Marketplace**
 1. Open VS Code.
-2. Search for `MiniMax Usage`.
+2. Search for `MiniMax Monitor`.
 3. Install the extension.
 
 **Option 2: Open VSX**
-- [open-vsx.org](https://open-vsx.org/extension/decard/minimax-usage-statusbar)
+- [open-vsx.org](https://open-vsx.org/extension/benpay/minimax-monitor)
 
 **Option 3: Manual VSIX**
 1. Download the latest `.vsix` package.
@@ -98,11 +98,11 @@ The status bar shows the selected key's current usage percentage and can optiona
 ### VS Code Extension
 
 1. Open the Command Palette with `Ctrl/Cmd + Shift + P`.
-2. Run `MiniMax Usage: Set API Key`.
+2. Run `MiniMax Monitor: Set API Key`.
 3. Enter your MiniMax API key.
 4. Press `Enter` to confirm.
 
-Use `MiniMax Usage: Add API Key` to manage multiple keys.
+Use `MiniMax Monitor: Add API Key` to manage multiple keys.
 
 ### Desktop App
 
@@ -126,13 +126,13 @@ Use `MiniMax Usage: Add API Key` to manage multiple keys.
 
 | Command | Description |
 |------|------|
-| `MiniMax Usage: Show Details` | Open the details panel |
-| `MiniMax Usage: Set API Key` | Set the primary API key |
-| `MiniMax Usage: Add API Key` | Add another API key |
-| `MiniMax Usage: Refresh` | Refresh the current selection |
-| `MiniMax Usage: Refresh All Keys` | Refresh all active keys |
-| `MiniMax Usage: Switch API Key` | Switch the selected key |
-| `MiniMax Usage: Clear API Key` | Clear all saved keys |
+| `MiniMax Monitor: Show Details` | Open the details panel |
+| `MiniMax Monitor: Set API Key` | Set the primary API key |
+| `MiniMax Monitor: Add API Key` | Add another API key |
+| `MiniMax Monitor: Refresh` | Refresh the current selection |
+| `MiniMax Monitor: Refresh All Keys` | Refresh all active keys |
+| `MiniMax Monitor: Switch API Key` | Switch the selected key |
+| `MiniMax Monitor: Clear API Key` | Clear all saved keys |
 
 ---
 

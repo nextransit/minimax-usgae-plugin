@@ -297,7 +297,7 @@ pub(crate) fn show_main_window(app: &AppHandle) {
 
 pub fn run() {
     init_logging();
-    log::info!("Starting MiniMax Usage Monitor");
+    log::info!("Starting MiniMax Monitor");
     log::info!(
         "Frontend resources: HTML {} bytes, CSS {} bytes, JS {} bytes",
         FRONTEND_HTML.len(),

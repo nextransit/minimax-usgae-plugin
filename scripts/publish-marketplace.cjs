@@ -8,14 +8,14 @@ function buildExpectedTag(version) {
   return `v${version}`;
 }
 
-function collectReleaseErrors({ version, tag, publisher, pat, requireTagMatch }) {
+function collectReleaseErrors({ version, tag, publisher, pat, requireTagMatch, requirePat = true }) {
   const errors = [];
 
   if (!publisher) {
     errors.push("package.json publisher is required for Marketplace publishing.");
   }
 
-  if (!pat) {
+  if (requirePat && !pat) {
     errors.push("VSCE_PAT is required for Marketplace publishing.");
   }
 
@@ -36,6 +36,10 @@ function readPackageManifest() {
   return JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
 }
 
+function maskPatForLog(pat) {
+  return pat ? "***" : "";
+}
+
 function run() {
   const args = new Set(process.argv.slice(2));
   const dryRun = args.has("--dry-run");
@@ -48,6 +52,7 @@ function run() {
     publisher: manifest.publisher,
     pat,
     requireTagMatch: Boolean(tag),
+    requirePat: !dryRun,
   });
 
   if (errors.length > 0) {
@@ -61,7 +66,8 @@ function run() {
   const commandArgs = ["vsce", "publish", "--pat", pat, "--allow-missing-repository"];
 
   if (dryRun) {
-    console.log(`Dry run: npx ${commandArgs.join(" ")}`);
+    const logArgs = ["vsce", "publish", "--pat", maskPatForLog(pat), "--allow-missing-repository"];
+    console.log(`Dry run: npx ${logArgs.join(" ")}`);
     return;
   }
 
@@ -81,6 +87,7 @@ function run() {
 module.exports = {
   buildExpectedTag,
   collectReleaseErrors,
+  maskPatForLog,
 };
 
 if (require.main === module) {

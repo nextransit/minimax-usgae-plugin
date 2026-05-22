@@ -1,4 +1,4 @@
-// MiniMax Usage Monitor - __TAURI__ Bridge for VS Code Webview
+// MiniMax Monitor - __TAURI__ Bridge for VS Code Webview
 // VS Code 环境下注入 window.__TAURI__ 模拟对象，
 // 将 Tauri invoke/listen 桥接到 VS Code webview message passing。
 // Tauri 原生环境下不做任何事。
