@@ -29,7 +29,7 @@ done
 REMOTE_LINUX_PORT="${REMOTE_LINUX_PORT:-22}"
 REMOTE_LINUX_SSH_KEY="${REMOTE_LINUX_SSH_KEY:-}"
 REMOTE_LINUX_PASSWORD="${REMOTE_LINUX_PASSWORD:-}"
-REMOTE_LINUX_BUILD_CMD="${REMOTE_LINUX_BUILD_CMD:-npm config delete proxy || true; npm config delete https-proxy || true; sudo apt-get update && sudo apt-get install -y libdbus-1-dev libayatana-appindicator3-dev librsvg2-dev libgtk-3-dev libwebkit2gtk-4.1-dev patchelf pkg-config rpm && npm ci && npm run tauri:build:ci}"
+REMOTE_LINUX_BUILD_CMD="${REMOTE_LINUX_BUILD_CMD:-npm config delete proxy || true; npm config delete https-proxy || true; npm config set registry https://registry.npmjs.org/ && npm config set fetch-retries 5 && npm config set fetch-retry-mintimeout 20000 && npm config set fetch-retry-maxtimeout 120000 && sudo apt-get update && sudo apt-get install -y libdbus-1-dev libayatana-appindicator3-dev librsvg2-dev libgtk-3-dev libwebkit2gtk-4.1-dev patchelf pkg-config rpm && npm ci && npm run tauri:build:ci}"
 REMOTE_LINUX_ARTIFACT_DIR="${REMOTE_LINUX_ARTIFACT_DIR:-src-tauri/target/release/bundle}"
 LOCAL_OUTPUT_DIR="${LOCAL_OUTPUT_DIR:-$ROOT_DIR/dist/linux-remote/$(date +%Y%m%d-%H%M%S)}"
 
